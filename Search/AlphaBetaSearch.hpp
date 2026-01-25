@@ -207,7 +207,7 @@ namespace Search {
 					// Delta-pruning: skip captures that cannot raise alpha sufficiently
 					if (isCapture && !inCheck) {
 						const int staticGain = order;
-						if ((stand_pat + staticGain + 550) <= alpha) {
+						if ((stand_pat + staticGain + 650) <= alpha) {
 							continue;
 						}
 					}
@@ -310,7 +310,7 @@ namespace Search {
 						if (mcode == ctx.killerMove[ctx.ply]) collector.order[i] += Killer1MoveCost;
 
 						// History heuristic influence (per-thread table, mutex-free)
-						collector.order[i] += ctx.history[ mv.from() ][ mv.to() ];
+						collector.order[i] += ctx.history[mv.from()][mv.to()];
 					}
 				}
 				else {
@@ -321,7 +321,7 @@ namespace Search {
 						if (mcode == ctx.killerMove[ctx.ply]) collector.order[i] += Killer1MoveCost;
 
 						// History heuristic influence (per-thread table, mutex-free)
-						collector.order[i] += ctx.history[ mv.from() ][ mv.to() ];
+						collector.order[i] += ctx.history[mv.from()][mv.to()];
 					}
 				}
 
@@ -336,7 +336,7 @@ namespace Search {
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[m]]);
 					const auto next = move.play(pos);
 
-					if (futilityPruning && m > 4)
+					if (futilityPruning && m > 5)
 						continue;
 
 					ctx.ply++;
@@ -346,7 +346,7 @@ namespace Search {
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						// more conservative LMR formula
-						int reduction = int(log2f(depth) / 2.0f + log2f(m) / 2.0f + 0.7f);
+						int reduction = int(log2f(depth) / 2.0f + log2f(m) / 2.0f + 1.0f);
 						if (reduction && pvNode) reduction--;
 						if (reduction && collector.order[collector.index[m]] > 100) reduction--;
 
@@ -368,18 +368,9 @@ namespace Search {
 						ctx.pvTable.table[ctx.ply].Compose(move.move, ctx.pvTable.table[ctx.ply + 1]);
 
 						if (alpha >= beta) {
-							// update per-thread history heuristic on beta cutoff (no mutex needed)
-							{
-								const int from = move.from();
-								const int to = move.to();
-								// add depth^2 to emphasize deeper cutoffs, cap to avoid overflow
-								const int add = int(depth) * int(depth);
-								const int32_t cap = std::numeric_limits<int32_t>::max() / 4;
-								int64_t val = int64_t(ctx.history[from][to]) + add;
-								if (val > cap) val = cap;
-								ctx.history[from][to] = int32_t(val);
-							}
-
+							const auto from = move.from();
+							const auto to = move.to();
+							ctx.history[from][to] = ctx.history[from][to] + depth * depth;
 							ctx.killerMove[ctx.ply] = move.move;
 							flag = TTable::Flag::Beta;
 							break;
@@ -489,25 +480,7 @@ namespace Search {
 							Gigantua::Board pos = current;
 							const auto startTime = std::chrono::high_resolution_clock::now();
 
-							int score = 0;
-
-							// Aspiration windows for main thread (i == 0) to speed up successful searches
-							if (i == 0 && currentBestLine.size > 0) {
-								// dynamic window based on depth and previous score
-								int window = std::max(50, 10 + int(depth) * 10);
-								int aspAlpha = currentBestScore - window;
-								int aspBeta = currentBestScore + window;
-
-								score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, aspAlpha, aspBeta);
-
-								// if fails low/high, retry with full window
-								if (score <= aspAlpha || score >= aspBeta) {
-									score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, -1000000, 1000000);
-								}
-							}
-							else {
-								score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, alpha, beta);
-							}
+							const int score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, alpha, beta);
 
 							const auto stopTime = std::chrono::high_resolution_clock::now();
 							const auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(stopTime - startTime);
@@ -538,7 +511,7 @@ namespace Search {
 
 									if (search_time_ms < minimax_ms) {
 										if (onWin) {
-											onWin(0);//BestMove());
+											onWin(0);
 										}
 
 										searchStarted = false;
@@ -547,7 +520,7 @@ namespace Search {
 								}
 							}
 						}
-						}));
+					}));
 				}
 
 				return true;
