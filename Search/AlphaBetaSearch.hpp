@@ -184,8 +184,8 @@ namespace Search {
 				}
 				else {
 					for (uint8_t i = 0; i < collector.size; i++) {
-						const Gigantua::Board::Move<white> move(collector.moves[i]);
-						collector.order[i] = 10000;
+						const Gigantua::Board::Move<white> mv(collector.moves[i]);
+						collector.order[i] = 10000 + SimpleSort(pos, mv, true);
 					}
 				}
 
