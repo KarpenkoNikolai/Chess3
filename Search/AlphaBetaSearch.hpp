@@ -71,14 +71,11 @@ namespace Search {
 				uint8_t ply = 0;
 				PvTable pvTable;
 				std::array<uint16_t, MaxSearchDepth> killerMove;
-				// history[from][to] - history heuristic, per-thread to avoid mutexes
-				std::array<std::array<int32_t, 64>, 64> history;
 
 				void Clear() {
 					ply = 0;
 					pvTable.Clear();
 					killerMove.fill(0);
-					for (auto &row : history) row.fill(0);
 				}
 			};
 
@@ -178,9 +175,9 @@ namespace Search {
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply >= 4);
+						collector.order[i] = SimpleSort(pos, mv, qply >= 6);
 
-						if (collector.order[i] > 3000 || collector.order[i] < 100) {
+						if (collector.order[i] > 9000 || collector.order[i] < 100) {
 							qply++;
 						}
 					}
@@ -188,7 +185,7 @@ namespace Search {
 				else {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> move(collector.moves[i]);
-						collector.order[i] = 5000;
+						collector.order[i] = 10000;
 					}
 				}
 
@@ -203,8 +200,8 @@ namespace Search {
 					if (order < 60)
 						break;
 
-					const bool isCapture = order < 3000 && order > 100;
-					// Delta-pruning: skip captures that cannot raise alpha sufficiently
+					const bool isCapture = order < 9000 && order > 100;
+
 					if (isCapture && !inCheck) {
 						const int staticGain = order;
 						if ((stand_pat + staticGain + 650) <= alpha) {
@@ -251,9 +248,11 @@ namespace Search {
 				const bool pvNode = (beta - alpha) > 1;
 				uint16_t bestMove = 0;
 
-				int cost = tTable.Get(pos, alpha, beta, depth, ctx.ply, bestMove);
-				if (!pvNode && ctx.ply && cost != TTable::NAN_VAL) {
-					return cost;
+				if (!pvNode && ctx.ply) {
+					int cost = tTable.Get(pos, alpha, beta, depth, ctx.ply, bestMove);
+					if (cost != TTable::NAN_VAL) {
+						return cost;
+					}
 				}
 
 				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
@@ -270,7 +269,7 @@ namespace Search {
 					// static evaluation for pruning purposes
 					const int staticEval = Evaluate(pos);
 
-					const int margin = 250 * depth;
+					const int margin = 350 * depth;
 					if ((staticEval - margin) >= beta) {
 						return (staticEval + beta) / 2;
 					}
@@ -308,9 +307,6 @@ namespace Search {
 
 						if (mcode == max_m) collector.order[i] += 2000000;
 						if (mcode == ctx.killerMove[ctx.ply]) collector.order[i] += Killer1MoveCost;
-
-						// History heuristic influence (per-thread table, mutex-free)
-						collector.order[i] += ctx.history[mv.from()][mv.to()];
 					}
 				}
 				else {
@@ -319,9 +315,6 @@ namespace Search {
 						const Gigantua::Board::Move<white> mv(mcode);
 						collector.order[i] = bestMove == mcode ? 1000000 : SimpleSort(pos, mv);
 						if (mcode == ctx.killerMove[ctx.ply]) collector.order[i] += Killer1MoveCost;
-
-						// History heuristic influence (per-thread table, mutex-free)
-						collector.order[i] += ctx.history[mv.from()][mv.to()];
 					}
 				}
 
@@ -336,7 +329,7 @@ namespace Search {
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[m]]);
 					const auto next = move.play(pos);
 
-					if (futilityPruning && m > 5)
+					if (futilityPruning && m > 3 && collector.order[collector.index[m]] < 100)
 						continue;
 
 					ctx.ply++;
@@ -370,7 +363,6 @@ namespace Search {
 						if (alpha >= beta) {
 							const auto from = move.from();
 							const auto to = move.to();
-							ctx.history[from][to] = ctx.history[from][to] + depth * depth;
 							ctx.killerMove[ctx.ply] = move.move;
 							flag = TTable::Flag::Beta;
 							break;
