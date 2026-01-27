@@ -361,8 +361,6 @@ namespace Search {
 						ctx.pvTable.table[ctx.ply].Compose(move.move, ctx.pvTable.table[ctx.ply + 1]);
 
 						if (alpha >= beta) {
-							const auto from = move.from();
-							const auto to = move.to();
 							ctx.killerMove[ctx.ply] = move.move;
 							flag = TTable::Flag::Beta;
 							break;
