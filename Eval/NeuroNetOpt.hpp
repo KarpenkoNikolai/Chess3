@@ -5,7 +5,7 @@
 #include <vector>
 #include <immintrin.h>
 #include <algorithm>
-
+#include <cstring>
 
 namespace NN
 {

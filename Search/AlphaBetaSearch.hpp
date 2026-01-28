@@ -15,6 +15,7 @@
 #include <map>
 #include <algorithm>
 #include <limits>
+#include <cstring>
 
 namespace Search {
 	namespace AlphaBeta {
@@ -45,7 +46,7 @@ namespace Search {
 				void Compose(uint16_t mv, const PvLine& tail)
 				{
 					line[0] = mv;
-					memcpy(line.data() + 1, tail.line.data(), tail.size * sizeof(uint16_t));
+					std::memcpy(line.data() + 1, tail.line.data(), tail.size * sizeof(uint16_t));
 					size = 1 + tail.size;
 				}
 
