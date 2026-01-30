@@ -155,18 +155,22 @@ namespace Search {
 				for (size_t i = 0; i < history.size(); i++)
 					if (pos.Hash == history[i]) return 0;
 
-				const int stand_pat = Evaluate(pos);
 
-				if (stand_pat >= beta) return beta;
+				int stand_pat = 0;
+				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
+
+				if (!inCheck) {
+					stand_pat = Evaluate(pos);
+					if (stand_pat >= beta) return beta;
+				}
 
 				MoveCollector<white> collector;
 				Gigantua::MoveList::EnumerateMoves<MoveCollector<white>, white>(collector, pos);
 
-				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply >= 6);
+						collector.order[i] = SimpleSort(pos, mv, qply >= 4);
 
 						if (collector.order[i] > 9000 || collector.order[i] < 100) {
 							qply++;
@@ -191,9 +195,7 @@ namespace Search {
 					if (order < 60)
 						break;
 
-					const bool isCapture = order < 9000 && order > 100;
-
-					if (isCapture && !inCheck) {
+					if (!inCheck && order < 9000) {
 						const int staticGain = order;
 						if ((stand_pat + staticGain + 650) <= alpha) {
 							continue;
@@ -239,9 +241,9 @@ namespace Search {
 				const bool pvNode = (beta - alpha) > 1;
 				uint16_t bestMove = 0;
 
-				if (!pvNode && ctx.ply) {
+				if (!pvNode) {
 					int cost = tTable.Get(pos, alpha, beta, depth, ctx.ply, bestMove);
-					if (!pvNode && ctx.ply && cost != TTable::NAN_VAL) {
+					if (cost != TTable::NAN_VAL) {
 						return cost;
 					}
 				}
@@ -264,7 +266,7 @@ namespace Search {
 					if ((staticEval - margin) >= beta) {
 						return (staticEval + beta) / 2;
 					}
-					// futility pruning condition
+#
 					if ((staticEval + 220 * depth) <= alpha)
 						futilityPruning = true;
 				}
@@ -281,13 +283,13 @@ namespace Search {
 
 				if (!nodePtr.IsNull()) {
 					float max_e = 0;
-					uint16_t max_m = 0;
+					uint16_t max_m1 = 0;
 					for (uint8_t j = 0; j < nodePtr->edges.size(); j++) {
 						const auto e = nodePtr->edges[j].getProbability<white>();
 						const auto m = nodePtr->edges[j].Move();
 						if (e > max_e) {
 							max_e = e;
-							max_m = m;
+							max_m1 = m;
 						}
 					}
 
@@ -296,7 +298,7 @@ namespace Search {
 						const Gigantua::Board::Move<white> mv(mcode);
 						collector.order[i] = bestMove == mcode ? 1000000 : SimpleSort(pos, mv);
 
-						if (mcode == max_m) collector.order[i] += 2000000;
+						if (mcode == max_m1) collector.order[i] += 2000000;
 						if (mcode == ctx.killerMove[ctx.ply]) collector.order[i] += Killer1MoveCost;
 					}
 				}
@@ -325,12 +327,12 @@ namespace Search {
 
 					ctx.ply++;
 
-					const bool reduce = m > 0 && !inCheck;
+					const bool reduce = m > 0 && depth > 1 && !inCheck;
 
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						// more conservative LMR formula
-						int reduction = int(std::log2(static_cast<float>(depth)) * 0.3 + std::log2(static_cast<float>(m)) * 0.5f + 1.0f);
+						int reduction = int(std::log2(static_cast<float>(depth)) * 0.4f + std::log2(static_cast<float>(m)) * 0.4f + 0.7f);
 						if (reduction && pvNode) reduction--;
 						if (reduction && collector.order[collector.index[m]] > 100) reduction--;
 

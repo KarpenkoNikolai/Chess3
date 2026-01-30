@@ -112,14 +112,13 @@ namespace Ant {
 		Gigantua::Board m_current;
 		AlphaBeta::SearchEngine m_abEngine;
 		std::array<uint64_t, 8> history;
-		float m_currentCost = 0;
 		static constexpr size_t AbAnt = 128;
 		static constexpr size_t MaxAnt = 128;
 
 		template <bool white>
 		void RunAnt(SearchContext& ctx, bool abAnt, bool maxAnt) {
 			uint8_t ply = 0;
-			const float currCost = m_currentCost;
+			const float currCost = static_cast<float>(m_abEngine.BestScore());
 			float lastCost = currCost;
 			Gigantua::Board position = m_current;
 			bool inLoop = false;
@@ -408,10 +407,6 @@ namespace Ant {
 			Stop();
 			m_current = brd;
 			uint16_t best = 0;
-			if (m_current.status.WhiteMove())
-				m_currentCost = m_abEngine.Search<true>(m_current, 2, best);
-			else
-				m_currentCost = m_abEngine.Search<false>(m_current, 2, best);
 		}
 
 		void SetHistory(const std::array<uint64_t, 8>& h) {
