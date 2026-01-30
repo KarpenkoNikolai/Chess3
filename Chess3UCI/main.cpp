@@ -305,7 +305,7 @@ std::vector<float> importNet(const std::string& fileName) {
 }
 
 int main() {
-    const std::vector<float> gen = importNet("genome.txt");
+    const std::vector<float> gen = importNet("genome0.txt");
     NN::NeuroNetEval::SetGenome(gen);
    
     std::function<float(const Gigantua::Board&)> costFunc = [](const Gigantua::Board& pos) {

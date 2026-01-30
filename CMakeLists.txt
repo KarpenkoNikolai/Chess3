@@ -11,4 +11,5 @@ if (BMI2_SUPPORT)
 endif()
 
 add_subdirectory(GigantuaTest)
+add_subdirectory(EngineTest)
 add_subdirectory(Chess3UCI)

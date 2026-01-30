@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <limits>
 #include <cstring>
+#include <cmath>
 
 namespace Search {
 	namespace AlphaBeta {
@@ -329,7 +330,7 @@ namespace Search {
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						// more conservative LMR formula
-						int reduction = int(log2f(depth) / 2.0f + log2f(m) / 2.0f + 1.0f);
+						int reduction = int(std::log2(static_cast<float>(depth)) / 2.0f + std::log2(static_cast<float>(m)) / 2.0f + 1.0f);
 						if (reduction && pvNode) reduction--;
 						if (reduction && collector.order[collector.index[m]] > 100) reduction--;
 

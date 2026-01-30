@@ -2,6 +2,7 @@
 
 #include <array>
 #include <vector>
+#include <atomic>
 
 #include <../Gigantua/ChessBase.hpp>
 
