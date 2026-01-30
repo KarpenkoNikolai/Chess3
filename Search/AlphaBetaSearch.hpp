@@ -241,7 +241,7 @@ namespace Search {
 
 				if (!pvNode && ctx.ply) {
 					int cost = tTable.Get(pos, alpha, beta, depth, ctx.ply, bestMove);
-					if (cost != TTable::NAN_VAL) {
+					if (!pvNode && ctx.ply && cost != TTable::NAN_VAL) {
 						return cost;
 					}
 				}
@@ -320,7 +320,7 @@ namespace Search {
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[m]]);
 					const auto next = move.play(pos);
 
-					if (futilityPruning && m > 3 && collector.order[collector.index[m]] < 100)
+					if (futilityPruning && m > 4 && collector.order[collector.index[m]] < 100)
 						continue;
 
 					ctx.ply++;
@@ -330,7 +330,7 @@ namespace Search {
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						// more conservative LMR formula
-						int reduction = int(std::log2(static_cast<float>(depth)) / 2.0f + std::log2(static_cast<float>(m)) / 2.0f + 1.0f);
+						int reduction = int(std::log2(static_cast<float>(depth)) * 0.3 + std::log2(static_cast<float>(m)) * 0.5f + 1.0f);
 						if (reduction && pvNode) reduction--;
 						if (reduction && collector.order[collector.index[m]] > 100) reduction--;
 
