@@ -111,17 +111,6 @@ namespace Search {
 				return m_costFunc(brd);
 			}
 
-			int SimpleEvaluate(const Gigantua::Board& brd) const {
-				int result = 0;
-				result += (Bitcount(brd.WPawn) - Bitcount(brd.BPawn)) * 136;
-				result += (Bitcount(brd.WKnight) - Bitcount(brd.BKnight)) * 782;
-				result += (Bitcount(brd.WBishop) - Bitcount(brd.BBishop)) * 830;
-				result += (Bitcount(brd.WRook) - Bitcount(brd.BRook)) * 1289;
-				result += (Bitcount(brd.WQueen) - Bitcount(brd.BQueen)) * 2529;
-
-				return (brd.status.WhiteMove() ? result : -result);
-			}
-
 			static bool isDraw(const Gigantua::Board& brd) {
 				if (brd.WPawn == 0ull && brd.BPawn == 0ull &&
 					brd.WRook == 0ull && brd.BRook == 0ull &&

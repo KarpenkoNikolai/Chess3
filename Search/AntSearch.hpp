@@ -58,7 +58,7 @@ namespace Ant {
 			};
 
 			template <bool white>
-			constexpr MoveCollector<white>& MoveCollector() {
+			constexpr MoveCollector<white>& GetMoveCollector() {
 				if constexpr (white) return collW;
 				else return collB;
 			}
@@ -131,7 +131,7 @@ namespace Ant {
 				{// first move
 					Search::GameTree::NodePtr nodePtr = m_searchTree.Get(position);
 					if (nodePtr.IsNull()) {
-						MoveCollector<white>& coll = ctx.MoveCollector<white>();
+						MoveCollector<white>& coll = ctx.GetMoveCollector<white>();
 						coll.Reset();
 						Gigantua::MoveList::EnumerateMoves<MoveCollector<white>, white>(coll, position);
 
@@ -235,7 +235,7 @@ namespace Ant {
 				{// second move
 					Search::GameTree::NodePtr nodePtr = m_searchTree.Get(position);
 					if (nodePtr.IsNull()) {
-						MoveCollector<!white>& coll = ctx.MoveCollector<!white>();
+						MoveCollector<!white>& coll = ctx.GetMoveCollector<!white>();
 						coll.Reset();
 						Gigantua::MoveList::EnumerateMoves<MoveCollector<!white>, !white>(coll, position);
 
