@@ -32,7 +32,8 @@ namespace Search {
 		{
 		private:
 			static constexpr int MatVal = 500000;
-			static constexpr int Killer1MoveCost = 3000;
+			static constexpr int Killer1MoveCost = 5000;
+			static constexpr int Killer2MoveCost = 200;
 
 			Search::TTable tTable;
 
@@ -72,12 +73,14 @@ namespace Search {
 			struct SearchCtx {
 				uint8_t ply = 0;
 				PvTable pvTable;
-				std::array<uint16_t, MaxSearchDepth> killerMove;
+				std::array<uint16_t, MaxSearchDepth> killerMove1;
+				std::array<uint16_t, MaxSearchDepth> killerMove2;
 
 				void Clear() {
 					ply = 0;
 					pvTable.Clear();
-					killerMove.fill(0);
+					killerMove1.fill(0);
+					killerMove2.fill(0);
 				}
 			};
 
@@ -100,7 +103,7 @@ namespace Search {
 			std::function<float(const Gigantua::Board&)> m_costFunc;
 			std::vector<SearchThread> searchThreads;
 			const GameTree* antTreePtr = nullptr;
-			std::array<uint64_t, 8> history;
+			std::array<uint64_t, 16> history;
 
 			void ClearSearch()
 			{
@@ -170,7 +173,7 @@ namespace Search {
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply >= 4);
+						collector.order[i] = SimpleSort(pos, mv, qply >= 2);
 
 						if (collector.order[i] > 9000 || collector.order[i] < 100) {
 							qply++;
@@ -197,7 +200,7 @@ namespace Search {
 
 					if (!inCheck && order < 9000) {
 						const int staticGain = order;
-						if ((stand_pat + staticGain + 650) <= alpha) {
+						if ((stand_pat + staticGain + 750) <= alpha) {
 							continue;
 						}
 					}
@@ -218,6 +221,20 @@ namespace Search {
 
 				return alpha;
 			}
+
+			static float EvaluateMat(const Gigantua::Board& brd)
+			{
+				float eval = 0;
+
+				eval += (136) * (Bitcount(brd.WPawn) - Bitcount(brd.BPawn));
+				eval += (782) * (Bitcount(brd.WKnight) - Bitcount(brd.BKnight));
+				eval += (830) * (Bitcount(brd.WBishop) - Bitcount(brd.BBishop));
+				eval += (1289) * (Bitcount(brd.WRook) - Bitcount(brd.BRook));
+				eval += (2529) * (Bitcount(brd.WQueen) - Bitcount(brd.BQueen));
+
+				return eval;
+			}
+
 
 			template<bool white> int MiniMaxAB(
 				SearchCtx& ctx,
@@ -241,7 +258,7 @@ namespace Search {
 				const bool pvNode = (beta - alpha) > 1;
 				uint16_t bestMove = 0;
 
-				if (!pvNode) {
+				if (!pvNode && ctx.ply) {
 					int cost = tTable.Get(pos, alpha, beta, depth, ctx.ply, bestMove);
 					if (cost != TTable::NAN_VAL) {
 						return cost;
@@ -258,11 +275,11 @@ namespace Search {
 
 				bool futilityPruning = false;
 
-				if (!inCheck && !pvNode && std::abs(alpha) < (MatVal - 100)) {
+				if (!inCheck && !pvNode && nodePtr.IsNull() && std::abs(alpha) < (MatVal - 100)) {
 					// static evaluation for pruning purposes
 					const int staticEval = Evaluate(pos);
 
-					const int margin = 350 * depth;
+					const int margin = 320 * depth;
 					if ((staticEval - margin) >= beta) {
 						return (staticEval + beta) / 2;
 					}
@@ -299,7 +316,8 @@ namespace Search {
 						collector.order[i] = bestMove == mcode ? 1000000 : SimpleSort(pos, mv);
 
 						if (mcode == max_m1) collector.order[i] += 2000000;
-						if (mcode == ctx.killerMove[ctx.ply]) collector.order[i] += Killer1MoveCost;
+						if (mcode == ctx.killerMove1[ctx.ply]) collector.order[i] += Killer1MoveCost;
+						if (mcode == ctx.killerMove2[ctx.ply]) collector.order[i] += Killer2MoveCost;
 					}
 				}
 				else {
@@ -307,12 +325,16 @@ namespace Search {
 						const auto mcode = collector.moves[i];
 						const Gigantua::Board::Move<white> mv(mcode);
 						collector.order[i] = bestMove == mcode ? 1000000 : SimpleSort(pos, mv);
-						if (mcode == ctx.killerMove[ctx.ply]) collector.order[i] += Killer1MoveCost;
+						if (mcode == ctx.killerMove1[ctx.ply]) collector.order[i] += Killer1MoveCost;
+						if (mcode == ctx.killerMove2[ctx.ply]) collector.order[i] += Killer2MoveCost;
 					}
 				}
 
 				TTable::Flag flag = TTable::Flag::Alpha;
 				uint8_t searchSize = collector.size;
+
+				const int movePruneThreshold = 0;
+				const int depthPruneThreshold = 0;
 
 				for (uint8_t m = 0; m < searchSize; m++) {
 					if (!searchStarted) break;
@@ -322,19 +344,21 @@ namespace Search {
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[m]]);
 					const auto next = move.play(pos);
 
-					if (futilityPruning && m > 4 && collector.order[collector.index[m]] < 100)
+					if (futilityPruning && m > 5)
 						continue;
 
 					ctx.ply++;
 
-					const bool reduce = m > 0 && depth > 1 && !inCheck;
+					const bool reduce = m > movePruneThreshold && depth > depthPruneThreshold && !inCheck;
 
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						// more conservative LMR formula
-						int reduction = int(std::log2(static_cast<float>(depth)) * 0.4f + std::log2(static_cast<float>(m)) * 0.4f + 0.7f);
+						int reduction = int(std::log2(depth) * 0.5f + std::log2(m) * 0.5f + 0.7f);
 						if (reduction && pvNode) reduction--;
 						if (reduction && collector.order[collector.index[m]] > 100) reduction--;
+						if (reduction && collector.order[collector.index[m]] > 2000) reduction--;
+						if (reduction && collector.order[collector.index[m]] > 3000) reduction--;
 
 						// try a null-window search with reduction
 						while ((score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha)) > alpha
@@ -354,7 +378,8 @@ namespace Search {
 						ctx.pvTable.table[ctx.ply].Compose(move.move, ctx.pvTable.table[ctx.ply + 1]);
 
 						if (alpha >= beta) {
-							ctx.killerMove[ctx.ply] = move.move;
+							ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
+							ctx.killerMove1[ctx.ply] = move.move;
 							flag = TTable::Flag::Beta;
 							break;
 						}
@@ -379,7 +404,7 @@ namespace Search {
 
 			constexpr int MatValue() const { return MatVal; }
 
-			void SetHistory(const std::array<uint64_t, 8>& h) { history = h; }
+			void SetHistory(const std::array<uint64_t, 16>& h) { history = h; }
 
 			void SetAntTree(const GameTree* treePtr)
 			{
@@ -446,7 +471,6 @@ namespace Search {
 				//threadsNum = 1;
 				for (uint16_t i = 0; i < threadsNum; i++) {
 					SearchThread st;
-					// initialize per-thread context (including history) to zero
 					st.ctx.Clear();
 					searchThreads.push_back(std::move(st));
 				}
@@ -455,15 +479,41 @@ namespace Search {
 					searchThreads[i].threadPtr.reset(new std::thread([this, current, milliseconds, i, onWin, threadsNum]() {
 						uint8_t depth = 1;
 						int64_t search_time_ms = milliseconds;
-						int alpha = -1000000;
-						int beta = 1000000;
-
+						// aspiration window variables will be set per-depth
 						while (searchStarted && depth < MaxSearchDepth) {
 							depth++;
 							Gigantua::Board pos = current;
 							const auto startTime = std::chrono::high_resolution_clock::now();
 
-							const int score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, alpha, beta);
+							// Aspiration window logic:
+							int window = 100; // initial aspiration window in centipawns
+							int score = 0;
+							int attempts = 0;
+							int prevScore = currentBestScore; // shared best score from previous iteration (may be 0)
+							bool useAspiration = (prevScore != 0);
+
+							// Try aspiration and widen if necessary (limited retries)
+							do {
+								int alpha = useAspiration && attempts == 0 ? prevScore - window : -1000000;
+								int beta  = useAspiration && attempts == 0 ? prevScore + window : 1000000;
+
+								score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, alpha, beta);
+
+								// if fail-low or fail-high, widen and retry
+								if (score <= alpha) {
+									window = std::max(window * 3, 200);
+									attempts++;
+									useAspiration = true;
+								}
+								else if (score >= beta) {
+									window = std::max(window * 3, 200);
+									attempts++;
+									useAspiration = true;
+								}
+								else {
+									break;
+								}
+							} while (attempts < 4 && searchStarted);
 
 							const auto stopTime = std::chrono::high_resolution_clock::now();
 							const auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(stopTime - startTime);

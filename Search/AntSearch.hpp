@@ -110,15 +110,16 @@ namespace Ant {
 		static constexpr float MatVal = 200000.0f;
 
 		Gigantua::Board m_current;
+		float m_currentCost = 0.0f;
 		AlphaBeta::SearchEngine m_abEngine;
-		std::array<uint64_t, 8> history;
+		std::array<uint64_t, 16> history;
 		static constexpr size_t AbAnt = 128;
 		static constexpr size_t MaxAnt = 128;
 
 		template <bool white>
 		void RunAnt(SearchContext& ctx, bool abAnt, bool maxAnt) {
 			uint8_t ply = 0;
-			const float currCost = static_cast<float>(m_abEngine.BestScore());
+			const float currCost = m_currentCost;
 			float lastCost = currCost;
 			Gigantua::Board position = m_current;
 			bool inLoop = false;
@@ -406,10 +407,15 @@ namespace Ant {
 		void Set(const Gigantua::Board& brd) {
 			Stop();
 			m_current = brd;
-			uint16_t best = 0;
+			uint16_t bestMove = 0;
+			if(m_current.status.WhiteMove())
+				m_currentCost = m_abEngine.Search<true>(m_current, 2, bestMove);
+			else
+				m_currentCost = m_abEngine.Search<false>(m_current, 2, bestMove);
+
 		}
 
-		void SetHistory(const std::array<uint64_t, 8>& h) {
+		void SetHistory(const std::array<uint64_t, 16>& h) {
 			m_abEngine.SetHistory(h);
 			history = h;
 		}

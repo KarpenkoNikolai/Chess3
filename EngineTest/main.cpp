@@ -99,8 +99,9 @@ int main() {
 	//Gigantua::Board p("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 	
 	//Gigantua::Board p("rnbqr1k1/pp4b1/1n1p2p1/2pN2p1/5P2/1Q6/PP2B1PP/R1B2RK1 w - - 0 16");// d5f6
-	Gigantua::Board p("r7/p3p1k1/1p1p1bBp/8/5P1P/1Rn4K/P1P3P1/4R3 w - - 4 29"); //g6d3
+	//Gigantua::Board p("r7/p3p1k1/1p1p1bBp/8/5P1P/1Rn4K/P1P3P1/4R3 w - - 4 29"); //g6d3
 	//Gigantua::Board p("1r5k/5p2/3Q1n1b/3Pp2n/2Pq4/5PB1/1r1N2RP/3RKB2 b - - 3 28");// h6d2
+	Gigantua::Board p("8/4RR2/4p1kp/pp3p2/2p4P/P3qPP1/4P1K1/8 w - - 4 33");// f7g7
 
 	std::cout << NN::NeuroNetEval::Evaluate(p) << std::endl;
 

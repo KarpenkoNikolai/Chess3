@@ -42,8 +42,8 @@ namespace Search {
 			}
 
 			void AddEntries(float cost) {
-				toxin *= 0.99999990f;
-				sugar *= 0.99999990f;
+				toxin *= 0.999990f;
+				sugar *= 0.999990f;
 
 				entries++;
 			}
@@ -52,7 +52,7 @@ namespace Search {
 			template <bool white>
 			float getProbability() const
 			{
-				if (entries == 0) return 4.0f;
+				if (entries == 0) return 4000.0f;
 
 				const auto s = (sugar + Smoothing);
 				const auto t = (toxin + Smoothing);

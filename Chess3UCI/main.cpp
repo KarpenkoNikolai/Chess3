@@ -97,7 +97,7 @@ public:
         };
 
         antEngine.Set(board);
-        std::array<uint64_t, 8> h = { 0 };
+        std::array<uint64_t, 16> h = { 0 };
         {
             uint8_t i = 0;
             for (uint64_t hash : history) {
