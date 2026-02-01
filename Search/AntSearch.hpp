@@ -67,7 +67,7 @@ namespace Ant {
 			std::array<Step, MaxPath> path;
 			std::array<float, 256> probList;
 
-			uint8_t peekRnd(std::array<float, 256>& list, size_t size)
+			inline uint8_t peekRnd(std::array<float, 256>& list, size_t size)
 			{
 				memset(list.data() + size, 0, 4 * sizeof(float));
 

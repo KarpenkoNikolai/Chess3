@@ -496,7 +496,7 @@ namespace Search {
 							const auto startTime = std::chrono::high_resolution_clock::now();
 
 							// Aspiration window logic:
-							int window = 100; // initial aspiration window in centipawns
+							int window = 120; // initial aspiration window in centipawns
 							int score = 0;
 							int attempts = 0;
 							int prevScore = currentBestScore; // shared best score from previous iteration (may be 0)

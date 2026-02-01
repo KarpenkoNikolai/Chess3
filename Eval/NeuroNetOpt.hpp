@@ -78,10 +78,7 @@ namespace NN
 			__m256i acc3 = _mm256_loadu_si256((__m256i*)(biases + 24));
 
 			for (uint32_t idx = 0; idx < inDims; idx++) {
-				int8_t inp = input[idx];
-				if (!inp) continue;
-
-				__m256i vinp = _mm256_set1_epi32(inp);
+				__m256i vinp = _mm256_set1_epi32(input[idx]);
 				const int8_t* w = weights + idx * 32;
 
 				__m256i w0 = _mm256_cvtepi8_epi32(_mm_loadl_epi64((__m128i*)(w + 0)));

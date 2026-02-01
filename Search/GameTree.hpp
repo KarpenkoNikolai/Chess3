@@ -42,8 +42,8 @@ namespace Search {
 			}
 
 			void AddEntries(float cost) {
-				toxin *= 0.999990f;
-				sugar *= 0.999990f;
+				toxin *= 0.9999990f;
+				sugar *= 0.9999990f;
 
 				entries++;
 			}
