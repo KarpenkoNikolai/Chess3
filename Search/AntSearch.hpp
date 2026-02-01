@@ -67,7 +67,7 @@ namespace Ant {
 			std::array<Step, MaxPath> path;
 			std::array<float, 256> probList;
 
-			uint8_t peekRnd(std::array<float, 256>& list, const size_t size)
+			uint8_t peekRnd(std::array<float, 256>& list, size_t size)
 			{
 				memset(list.data() + size, 0, 4 * sizeof(float));
 
@@ -110,258 +110,182 @@ namespace Ant {
 		static constexpr float MatVal = 200000.0f;
 
 		Gigantua::Board m_current;
-		float m_currentCost = 0.0f;
 		AlphaBeta::SearchEngine m_abEngine;
 		std::array<uint64_t, 16> history;
 		static constexpr size_t AbAnt = 128;
 		static constexpr size_t MaxAnt = 128;
 
+		enum class AntStepResult
+		{
+			Sucess,
+			inLoop,
+			isMate,
+			isPat,
+			EndPath,
+			Retry
+		};
+
+		template <bool MoveWhite>
+		inline AntStepResult DoStep(SearchContext& ctx, bool abAnt, bool maxAnt,
+			Gigantua::Board& position, uint8_t& ply,
+			std::array<uint64_t, SearchContext::MaxPath>& repetition)
+		{
+			using NodePtr = Search::GameTree::NodePtr;
+
+			NodePtr nodePtr = m_searchTree.Get(position);
+			if (nodePtr.IsNull()) {
+				MoveCollector<MoveWhite>& coll = ctx.GetMoveCollector<MoveWhite>();
+				coll.Reset();
+				Gigantua::MoveList::EnumerateMoves<MoveCollector<MoveWhite>, MoveWhite>(coll, position);
+
+				for (uint8_t i = 0; i < coll.size; i++) {
+					const Gigantua::Board::Move<MoveWhite> move(coll.moves[i]);
+					coll.order[i] = SimpleSort(position, move);
+				}
+
+				coll.SortMoves();
+				nodePtr = m_searchTree.Put(position, coll.moves.data(), coll.index.data(), coll.size);
+			}
+
+			if (nodePtr.IsNull()) {
+				return AntStepResult::Retry;
+			}
+
+			Search::GameTree::EdgeList& edges = nodePtr->edges;
+
+			if (edges.size() == 0) {
+				if (Gigantua::MoveList::InCheck<MoveWhite>(position)) {
+					return AntStepResult::isMate;
+				}
+				else {
+					return AntStepResult::isPat;
+				}
+			}
+
+			uint8_t moveIndex = 0;
+			bool isRndAnt = true;
+
+			if (maxAnt) {
+				isRndAnt = false;
+				float maxProb = 0;
+				for (uint8_t k = 0; k < edges.size(); k++) {
+					const float prob = edges[k].template getProbability<MoveWhite>();
+					if (maxProb < prob) {
+						maxProb = prob;
+						moveIndex = k;
+					}
+				}
+			}
+			else if (abAnt) {
+				const auto abline = m_abEngine.GetBestLine();
+				if (ply < abline.size) {
+					const auto abMove = abline.line[ply];
+					for (uint8_t k = 0; k < edges.size(); k++) {
+						if (edges[k].Move() == abMove) {
+							isRndAnt = false;
+							moveIndex = k;
+							break;
+						}
+					}
+				}
+			}
+
+			if (isRndAnt) {
+				for (uint8_t k = 0; k < edges.size(); k++) {
+					ctx.probList[k] = edges[k].template getProbability<MoveWhite>();
+				}
+				moveIndex = ctx.peekRnd(ctx.probList, edges.size());
+
+				if (edges[moveIndex].Entries() == 0) {
+					for (uint8_t k = 0; k < edges.size(); k++) {
+						if (edges[k].Entries() == 0) {
+							moveIndex = k;
+							break;
+						}
+					}
+				}
+			}
+
+			// record step (board before the move) and edge pointer
+			ctx.path[ply].board = position;
+			ctx.path[ply].edgePtr = &edges[moveIndex];
+			ply++;
+
+			if (nodePtr->board != position) {
+				return AntStepResult::Retry;
+			}
+
+			const Gigantua::Board::Move<MoveWhite> currMove(edges[moveIndex].Move());
+			position = currMove.play(position);
+			nodePtr.Unlock();
+
+			// common repetition / loop detection against global history
+			for (size_t i = 0; i < history.size(); i++) {
+				if (position.Hash == history[i]) {
+					return AntStepResult::inLoop;
+				}
+			}
+
+			repetition[ply] = position.Hash;
+
+			if (ply > 2) {
+				for (int i = ply - 2; i > -1; i -= 2) {
+					if (position.Hash == repetition[i]) {
+						return AntStepResult::inLoop;
+					}
+				}
+			}
+
+			if (edges[moveIndex].Entries() == 0) {
+				return AntStepResult::EndPath;
+			}
+
+			return AntStepResult::Sucess;
+		}
+
 		template <bool white>
 		void RunAnt(SearchContext& ctx, bool abAnt, bool maxAnt) {
 			uint8_t ply = 0;
-			const float currCost = m_currentCost;
+			const float currCost = float(m_abEngine.BestScore());
 			float lastCost = currCost;
 			Gigantua::Board position = m_current;
-			bool inLoop = false;
-			bool isPat = false;
-			bool evaluated = false;
+			AntStepResult stepResult = AntStepResult::EndPath;
 			std::array<uint64_t, SearchContext::MaxPath> repetition = { 0 };
 			repetition[ply] = position.Hash;
 			while (ply < SearchContext::MaxPath - 2) {
-				{// first move
-					Search::GameTree::NodePtr nodePtr = m_searchTree.Get(position);
-					if (nodePtr.IsNull()) {
-						MoveCollector<white>& coll = ctx.GetMoveCollector<white>();
-						coll.Reset();
-						Gigantua::MoveList::EnumerateMoves<MoveCollector<white>, white>(coll, position);
+				// first move: this is "my" move when RunAnt<white> and DoStep<white, true>
+				{
+					stepResult = DoStep<white>(ctx, abAnt, maxAnt, position, ply, repetition);
+					if (stepResult != AntStepResult::Sucess) break;
+				}
 
-						for (uint8_t i = 0; i < coll.size; i++) {
-							const Gigantua::Board::Move<white> move(coll.moves[i]);
-							coll.order[i] = SimpleSort(position, move);
-						}
-
-						coll.SortMoves();
-						nodePtr = m_searchTree.Put(position, coll.moves.data(), coll.index.data(), coll.size);
-					}
-
-					if (nodePtr.IsNull()) {
-						ply = 0;
-						break;
-					}
-
-					Search::GameTree::EdgeList& edges = nodePtr->edges;
-
-					if (edges.size() == 0) {
-						if (Gigantua::MoveList::InCheck<white>(position)) {
-							lastCost = std::min(-10000.0f, -MatVal + 10000 * ply);
-							evaluated = true;
-						}
-						else isPat = true;
-						break;
-					}
-
-					uint8_t moveIndex = 0;
-					bool isRndAnt = true;
-					
-					if (maxAnt) {
-						isRndAnt = false;
-						float maxProb = 0;
-						for (uint8_t k = 0; k < edges.size(); k++) {
-							const float prob = edges[k].getProbability<white>();
-							if (maxProb < prob) {
-								maxProb = prob;
-								moveIndex = k;
-							}
-						}
-					}
-					else if (abAnt) {
-						const auto abline = m_abEngine.GetBestLine();
-						if (ply < abline.size) {
-							const auto abMove = abline.line[ply];
-
-							for (uint8_t k = 0; k < edges.size(); k++) {
-								if (edges[k].Move() == abMove) {
-									isRndAnt = false;
-									moveIndex = k;
-									break;
-								}
-							}
-						}
-					}
-
-					if (isRndAnt) {
-						for (uint8_t k = 0; k < edges.size(); k++) {
-							ctx.probList[k] = edges[k].getProbability<white>();
-						}
-						moveIndex = ctx.peekRnd(ctx.probList, edges.size());
-
-						if (edges[moveIndex].Entries() == 0) {
-							for (uint8_t k = 0; k < edges.size(); k++) {
-								if (edges[k].Entries() == 0) {
-									moveIndex = k;
-									break;
-								}
-							}
-						}
-					}
-
-					ctx.path[ply].board = position;
-					ctx.path[ply].edgePtr = &edges[moveIndex];
-					ply++;
-
-					if (nodePtr->board != position) {
-						ply = 0;
-						break;
-					}
-
-					const Gigantua::Board::Move<white> currMove(edges[moveIndex].Move());
-					position = currMove.play(position);
-					nodePtr.Unlock();
-
-					for (size_t i = 0; i < history.size(); i++) {
-						if (position.Hash == history[i]) {
-							inLoop = true;
-							break;
-						}
-					}
-
-					if (edges[moveIndex].Entries() == 0) {
-						lastCost = -m_costFunc(position);
-						evaluated = true;
-						break;
-					}
-				} //end first move
-
-				{// second move
-					Search::GameTree::NodePtr nodePtr = m_searchTree.Get(position);
-					if (nodePtr.IsNull()) {
-						MoveCollector<!white>& coll = ctx.GetMoveCollector<!white>();
-						coll.Reset();
-						Gigantua::MoveList::EnumerateMoves<MoveCollector<!white>, !white>(coll, position);
-
-						for (uint8_t i = 0; i < coll.size; i++) {
-							const Gigantua::Board::Move<!white> move(coll.moves[i]);
-							coll.order[i] = SimpleSort(position, move);
-						}
-
-						coll.SortMoves();
-						nodePtr = m_searchTree.Put(position, coll.moves.data(), coll.index.data(), coll.size);
-					}
-
-					if (nodePtr.IsNull()) {
-						ply = 0;
-						break;
-					}
-
-					Search::GameTree::EdgeList& edges = nodePtr->edges;
-
-					if (edges.size() == 0) {
-						if (Gigantua::MoveList::InCheck<!white>(position)) {
-							lastCost = std::max(10000.0f, MatVal - 10000 * ply);
-							evaluated = true;
-						}
-						else isPat = true;
-						break;
-					}
-
-					uint8_t moveIndex = 0;
-					bool isRndAnt = true;
-
-					if (maxAnt) {
-						isRndAnt = false;
-						float maxProb = 0;
-						for (uint8_t k = 0; k < edges.size(); k++) {
-							const float prob = edges[k].getProbability<!white>();
-							if (maxProb < prob) {
-								maxProb = prob;
-								moveIndex = k;
-							}
-						}
-					}
-					else if (abAnt) {
-						const auto abline = m_abEngine.GetBestLine();
-						if (ply < abline.size) {
-							const auto abMove = abline.line[ply];
-
-							for (uint8_t k = 0; k < edges.size(); k++) {
-								if (edges[k].Move() == abMove) {
-									isRndAnt = false;
-									moveIndex = k;
-									break;
-								}
-							}
-						}
-					}
-
-					if(isRndAnt) {
-						for (uint8_t k = 0; k < edges.size(); k++) {
-							ctx.probList[k] = edges[k].getProbability<!white>();
-						}
-						moveIndex = ctx.peekRnd(ctx.probList, edges.size());
-
-						if (edges[moveIndex].Entries() == 0) {
-							for (uint8_t k = 0; k < edges.size(); k++) {
-								if (edges[k].Entries() == 0) {
-									moveIndex = k;
-									break;
-								}
-							}
-						}
-					}
-
-					ctx.path[ply].board = position;
-					ctx.path[ply].edgePtr = &edges[moveIndex];
-					ply++;
-
-					if (nodePtr->board != position) {
-						ply = 0;
-						break;
-					}
-
-					const Gigantua::Board::Move<!white> currMove(edges[moveIndex].Move());
-					position = currMove.play(position);
-					nodePtr.Unlock();
-
-					repetition[ply] = position.Hash;
-
-					for (size_t i = 0; i < history.size(); i++) {
-						if (position.Hash == history[i]) {
-							inLoop = true;
-							break;
-						}
-					}
-
-					for (int i = ply - 2; i > -1; i -= 2) {
-						if (position.Hash == repetition[i]) {
-							inLoop = true;
-							break;
-						}
-					}
-
-					if (inLoop) {
-						break;
-					}
-
-					if (edges[moveIndex].Entries() == 0) {
-						lastCost = m_costFunc(position);
-						evaluated = true;
-						break;
-					}
-				}// end second move
-
+				// second move: opponent move
+				{
+					stepResult = DoStep<!white>(ctx, abAnt, maxAnt, position, ply, repetition);
+					if (stepResult != AntStepResult::Sucess) break;
+				}
 			}// while path
 
-			if (ply == 0) {
+			if (stepResult == AntStepResult::Retry) {
 				return;
 			}
 
-			if (!evaluated) {
-				lastCost = m_costFunc(position);
+			if(stepResult == AntStepResult::isMate) {
+				if(white == position.status.WhiteMove())
+					lastCost = std::max(10000.0f, -MatVal + 10000 * ply);
+				else
+					lastCost = std::max(10000.0f, MatVal - 10000 * ply);
+			}
+			else if (stepResult == AntStepResult::EndPath) {
+				if (white == position.status.WhiteMove())
+					lastCost = m_costFunc(position);
+				else
+					lastCost = -m_costFunc(position);
 			}
 			
 			float cost = lastCost - currCost;
 
-			if (inLoop || isPat) {
+			if (stepResult == AntStepResult::isPat || stepResult == AntStepResult::inLoop) {
 				if(currCost > 100) cost = -500.0f;
 				else cost = -500;
 			}
@@ -407,12 +331,6 @@ namespace Ant {
 		void Set(const Gigantua::Board& brd) {
 			Stop();
 			m_current = brd;
-			uint16_t bestMove = 0;
-			if(m_current.status.WhiteMove())
-				m_currentCost = m_abEngine.Search<true>(m_current, 2, bestMove);
-			else
-				m_currentCost = m_abEngine.Search<false>(m_current, 2, bestMove);
-
 		}
 
 		void SetHistory(const std::array<uint64_t, 16>& h) {
