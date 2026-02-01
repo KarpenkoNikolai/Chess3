@@ -222,24 +222,10 @@ namespace Search {
 				return alpha;
 			}
 
-			static float EvaluateMat(const Gigantua::Board& brd)
-			{
-				float eval = 0;
-
-				eval += (136) * (Bitcount(brd.WPawn) - Bitcount(brd.BPawn));
-				eval += (782) * (Bitcount(brd.WKnight) - Bitcount(brd.BKnight));
-				eval += (830) * (Bitcount(brd.WBishop) - Bitcount(brd.BBishop));
-				eval += (1289) * (Bitcount(brd.WRook) - Bitcount(brd.BRook));
-				eval += (2529) * (Bitcount(brd.WQueen) - Bitcount(brd.BQueen));
-
-				return eval;
-			}
-
-
 			template<bool white> int MiniMaxAB(
 				SearchCtx& ctx,
 				const Gigantua::Board& pos,
-				int8_t depth, int alpha, int beta)
+				int8_t depth, int alpha, int beta, int moveOrder = 0)
 			{
 				if (ctx.ply >= MaxSearchDepth) return 0;
 				if (isDraw(pos)) return 0;
@@ -275,17 +261,21 @@ namespace Search {
 
 				bool futilityPruning = false;
 
-				if (!inCheck && !pvNode && nodePtr.IsNull() && std::abs(alpha) < (MatVal - 100)) {
-					// static evaluation for pruning purposes
+				if (moveOrder < 100 && !pvNode && nodePtr.IsNull() && std::abs(alpha) < (MatVal - 100)) {
 					const int staticEval = Evaluate(pos);
 
-					const int margin = 320 * depth;
-					if ((staticEval - margin) >= beta) {
-						return (staticEval + beta) / 2;
+					if (moveOrder < 70) {
+						int margin = 120 * depth;
+						if ((staticEval - margin) >= beta) {
+							return (staticEval + beta) / 2;
+						}
 					}
-#
-					if ((staticEval + 220 * depth) <= alpha)
-						futilityPruning = true;
+
+					{
+						int margin = 220 * depth;
+						if ((staticEval + margin) <= alpha)
+							futilityPruning = true;
+					}
 				}
 
 				MoveCollector<white> collector;
@@ -342,10 +332,11 @@ namespace Search {
 					collector.SortMoves(m);
 
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[m]]);
+					const auto order = collector.order[collector.index[m]];
 					const auto next = move.play(pos);
 
 					if (futilityPruning && m > 5)
-						continue;
+						break;
 
 					ctx.ply++;
 
@@ -356,18 +347,18 @@ namespace Search {
 						// more conservative LMR formula
 						int reduction = int(std::log2(depth) * 0.5f + std::log2(m) * 0.5f + 0.7f);
 						if (reduction && pvNode) reduction--;
-						if (reduction && collector.order[collector.index[m]] > 100) reduction--;
-						if (reduction && collector.order[collector.index[m]] > 2000) reduction--;
-						if (reduction && collector.order[collector.index[m]] > 3000) reduction--;
+						if (reduction && order > 100) reduction--;
+						if (reduction && order > 2000) reduction--;
+						if (reduction && order > 3000) reduction--;
 
 						// try a null-window search with reduction
-						while ((score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha)) > alpha
+						while ((score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order)) > alpha
 							&& reduction > 0
 							) reduction = 0;
 					}
 
 					if (score > alpha)
-						score = -MiniMaxAB<!white>(ctx, next, depth - 1, -beta, -alpha);
+						score = -MiniMaxAB<!white>(ctx, next, depth - 1, -beta, -alpha, order);
 
 					ctx.ply--;
 
