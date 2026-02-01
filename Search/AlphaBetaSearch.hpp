@@ -73,14 +73,16 @@ namespace Search {
 			struct SearchCtx {
 				uint8_t ply = 0;
 				PvTable pvTable;
-				std::array<uint16_t, MaxSearchDepth> killerMove1;
-				std::array<uint16_t, MaxSearchDepth> killerMove2;
+				std::array<uint16_t, MaxSearchDepth> killerMove1 = { 0 };
+				std::array<uint16_t, MaxSearchDepth> killerMove2 = { 0 };
+				std::array<uint64_t, MaxSearchDepth> repetition = { 0 };
 
 				void Clear() {
 					ply = 0;
 					pvTable.Clear();
 					killerMove1.fill(0);
 					killerMove2.fill(0);
+					repetition.fill(0);
 				}
 			};
 
@@ -155,9 +157,9 @@ namespace Search {
 				if (ply >= MaxSearchDepth) return 0;
 				if (isDraw(pos)) return 0;
 
+				// global history repetition
 				for (size_t i = 0; i < history.size(); i++)
 					if (pos.Hash == history[i]) return 0;
-
 
 				int stand_pat = 0;
 				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
@@ -208,6 +210,7 @@ namespace Search {
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[i]]);
 
 					const auto next = move.play(pos);
+
 					int score = -QuiescenceSearch<!white>(next, -beta, -alpha, ply + 1, qply);
 					if (score > alpha) {
 						alpha = score;
@@ -233,6 +236,12 @@ namespace Search {
 				if (ctx.ply) {
 					for (size_t i = 0; i < history.size(); i++)
 						if (pos.Hash == history[i]) return 0;
+
+					// per-thread repetition check (same side positions only)
+					for (int i = int(ctx.ply) - 2; i >= 0; i--) {
+						if (pos.Hash == ctx.repetition[i])
+							return 0;
+					}
 				}
 
 				Search::GameTree::ConstNodePtr nodePtr = nullptr;
@@ -340,6 +349,11 @@ namespace Search {
 
 					ctx.ply++;
 
+					// record repetition for next ply
+					if (ctx.ply < MaxSearchDepth) {
+						ctx.repetition[ctx.ply] = next.Hash;
+					}
+
 					const bool reduce = m > movePruneThreshold && depth > depthPruneThreshold && !inCheck;
 
 					int score = std::numeric_limits<int>::max();
@@ -423,6 +437,9 @@ namespace Search {
 
 				SearchCtx ctx;
 				ctx.Clear();
+				// record root hash for repetition checks
+				ctx.repetition[0] = current.Hash;
+
 				searchStarted = true;
 				int score = MiniMaxAB<white>(ctx, current, depth, -100000, 100000);
 				searchStarted = false;
@@ -474,6 +491,8 @@ namespace Search {
 						while (searchStarted && depth < MaxSearchDepth) {
 							depth++;
 							Gigantua::Board pos = current;
+							// ensure per-thread ctx has root repetition set
+							searchThreads[i].ctx.repetition[0] = pos.Hash;
 							const auto startTime = std::chrono::high_resolution_clock::now();
 
 							// Aspiration window logic:
@@ -551,7 +570,7 @@ namespace Search {
 			}
 
 			template<bool white> int qSearch(const Gigantua::Board& brd) {
-				return QuiescenceSearch<white>(brd, -1000000, 1000000);
+				return QuiescenceSearch<white>(brd, -1000000, 1000000, 0, 0);
 			}
 
 			void Stop() {
