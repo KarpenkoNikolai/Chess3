@@ -270,10 +270,10 @@ namespace Search {
 
 				bool futilityPruning = false;
 
-				if (moveOrder < 100 && !pvNode && nodePtr.IsNull() && std::abs(alpha) < (MatVal - 100)) {
+				if (moveOrder < 70 && !pvNode && nodePtr.IsNull() && std::abs(alpha) < (MatVal - 100)) {
 					const int staticEval = Evaluate(pos);
 
-					if (moveOrder < 70) {
+					{
 						int margin = 120 * depth;
 						if ((staticEval - margin) >= beta) {
 							return (staticEval + beta) / 2;
@@ -344,7 +344,7 @@ namespace Search {
 					const auto order = collector.order[collector.index[m]];
 					const auto next = move.play(pos);
 
-					if (futilityPruning && m > 5)
+					if (futilityPruning && m > 4)
 						break;
 
 					ctx.ply++;
