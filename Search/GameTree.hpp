@@ -58,11 +58,11 @@ namespace Search {
 				const auto t = (toxin + Smoothing);
 
 				if constexpr (white) {
-					const auto d = (s) / (t + 5 * entries);
+					const auto d = (s) / (t + 20 * entries);
 					return d;
 				}
 				else {
-					const auto d = (t) / (s + 5 * entries);
+					const auto d = (t) / (s + 20 * entries);
 					return d;
 				}
 			}

@@ -32,8 +32,8 @@ namespace Search {
 		{
 		private:
 			static constexpr int MatVal = 500000;
-			static constexpr int Killer1MoveCost = 5000;
-			static constexpr int Killer2MoveCost = 200;
+			static constexpr int Killer1MoveCost = 500;
+			static constexpr int Killer2MoveCost = 100;
 
 			Search::TTable tTable;
 
@@ -175,11 +175,7 @@ namespace Search {
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply >= 2);
-
-						if (collector.order[i] > 9000 || collector.order[i] < 100) {
-							qply++;
-						}
+						collector.order[i] = SimpleSort(pos, mv, qply >= 4);
 					}
 				}
 				else {
@@ -205,6 +201,10 @@ namespace Search {
 						if ((stand_pat + staticGain + 750) <= alpha) {
 							continue;
 						}
+					}
+
+					if (order > 9000 || order < 100) {
+						qply++;
 					}
 
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[i]]);
@@ -359,7 +359,8 @@ namespace Search {
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						// more conservative LMR formula
-						int reduction = int(std::log2(depth) * 0.5f + std::log2(m) * 0.5f + 0.7f);
+						int reduction = int(std::log2(depth) * 0.5f + std::log2(m) * 0.5f + 0.8f);
+						//int reduction = int(std::log2(depth) * std::log2(m) * 0.5f + 0.5);
 						if (reduction && pvNode) reduction--;
 						if (reduction && order > 100) reduction--;
 						if (reduction && order > 2000) reduction--;
