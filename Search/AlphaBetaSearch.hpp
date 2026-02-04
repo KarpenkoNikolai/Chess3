@@ -156,12 +156,14 @@ namespace Search {
 			template<bool white>
 			int QuiescenceSearch(const Gigantua::Board& pos, int alpha, int beta, int ply, int qply) {
 
-				if (ply >= MaxSearchDepth) return 0;
+				if (ply >= MaxSearchDepth && std::abs(alpha) < (MatVal - 100)) return 0;
 				if (isDraw(pos)) return 0;
 
-				// global history repetition
-				for (size_t i = 0; i < history.size(); i++)
-					if (pos.Hash == history[i]) return 0;
+				if (std::abs(alpha) < (MatVal - 100)) {
+					// global history repetition
+					for (size_t i = 0; i < history.size(); i++)
+						if (pos.Hash == history[i]) return 0;
+				}
 
 				int stand_pat = 0;
 				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
@@ -232,10 +234,10 @@ namespace Search {
 				const Gigantua::Board& pos,
 				int8_t depth, int alpha, int beta, int moveOrder = 0)
 			{
-				if (ctx.ply >= MaxSearchDepth) return 0;
+				if (ctx.ply >= MaxSearchDepth && std::abs(alpha) < (MatVal - 100)) return 0;
 				if (isDraw(pos)) return 0;
 
-				if (ctx.ply) {
+				if (ctx.ply && std::abs(alpha) < (MatVal - 100)) {
 					for (size_t i = 0; i < history.size(); i++)
 						if (pos.Hash == history[i]) return 0;
 
@@ -363,6 +365,7 @@ namespace Search {
 						// more conservative LMR formula
 						int reduction = int(std::log2(depth) * 0.5f + std::log2(m) * 0.5f + 0.7f);
 						//int reduction = int(std::log2(depth) * std::log2(m) * 0.5f + 0.5);
+						if(reduction && std::abs(alpha) < (MatVal - 100)) reduction--;
 						if (reduction && pvNode) reduction--;
 						if (reduction && order > 100) reduction--;
 						if (reduction && order > 2000) reduction--;
