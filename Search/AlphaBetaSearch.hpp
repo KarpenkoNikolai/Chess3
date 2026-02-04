@@ -107,10 +107,12 @@ namespace Search {
 			const GameTree* antTreePtr = nullptr;
 			std::array<uint64_t, 16> history;
 
+			// Mutex used by root-splitting threads to update shared best result
+			std::mutex rootSplitMutex;
+
 			void ClearSearch()
 			{
 				tTable.Clear();
-				// per-thread histories are cleared when threads are (re)created
 			}
 
 			int Evaluate(const Gigantua::Board& brd) const {
@@ -175,7 +177,7 @@ namespace Search {
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply >= 4);
+						collector.order[i] = SimpleSort(pos, mv, qply >= 2);
 					}
 				}
 				else {
@@ -193,7 +195,7 @@ namespace Search {
 					collector.SortMoves(i);
 					const int order = collector.order[collector.index[i]];
 
-					if (order < 60)
+					if (order < 5)
 						break;
 
 					if (!inCheck && order < 9000) {
@@ -270,11 +272,11 @@ namespace Search {
 
 				bool futilityPruning = false;
 
-				if (moveOrder < 70 && !pvNode && nodePtr.IsNull() && std::abs(alpha) < (MatVal - 100)) {
+				if (moveOrder < 100 && !pvNode && nodePtr.IsNull() && std::abs(alpha) < (MatVal - 100)) {
 					const int staticEval = Evaluate(pos);
 
 					{
-						int margin = 120 * depth;
+						int margin = 300 * depth;
 						if ((staticEval - margin) >= beta) {
 							return (staticEval + beta) / 2;
 						}
@@ -359,7 +361,7 @@ namespace Search {
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						// more conservative LMR formula
-						int reduction = int(std::log2(depth) * 0.5f + std::log2(m) * 0.5f + 0.8f);
+						int reduction = int(std::log2(depth) * 0.5f + std::log2(m) * 0.5f + 0.7f);
 						//int reduction = int(std::log2(depth) * std::log2(m) * 0.5f + 0.5);
 						if (reduction && pvNode) reduction--;
 						if (reduction && order > 100) reduction--;
