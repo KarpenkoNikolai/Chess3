@@ -120,36 +120,27 @@ namespace Search {
 			}
 
 			static bool isDraw(const Gigantua::Board& brd) {
+				// keine Bauern, Türme, Damen => nur Leicht- und Springer bleiben
 				if (brd.WPawn == 0ull && brd.BPawn == 0ull &&
 					brd.WRook == 0ull && brd.BRook == 0ull &&
 					brd.WQueen == 0ull && brd.BQueen == 0ull) {
 
-					if (brd.WBishop == 0ull && brd.BBishop == 0ull && Bitcount(brd.WKnight) == 1ull && brd.BKnight == 0ull)
-						return true;
+					const auto wKn = Bitcount(brd.WKnight);
+					const auto bKn = Bitcount(brd.BKnight);
+					const auto wBi = Bitcount(brd.WBishop);
+					const auto bBi = Bitcount(brd.BBishop);
 
-					if (brd.WBishop == 0ull && brd.BBishop == 0ull && Bitcount(brd.WKnight) == 0ull && brd.BKnight == 1ull)
-						return true;
+					// klassische triviale Remisfälle
+					if (wBi == 0 && bBi == 0 && wKn == 1 && bKn == 0) return true;
+					if (wBi == 0 && bBi == 0 && wKn == 0 && bKn == 1) return true;
+					if (wBi == 0 && bBi == 0 && wKn == 1 && bKn == 1) return true;
 
-					if (brd.WBishop == 0ull && brd.BBishop == 0ull && Bitcount(brd.WKnight) == 1ull && brd.BKnight == 1ull)
-						return true;
-
-					if (brd.WBishop == 1ull && brd.BBishop == 0ull && Bitcount(brd.WKnight) == 0ull && brd.BKnight == 0ull)
-						return true;
-
-					if (brd.WBishop == 0ull && brd.BBishop == 1ull && Bitcount(brd.WKnight) == 0ull && brd.BKnight == 0ull)
-						return true;
-
-					if (brd.WBishop == 1ull && brd.BBishop == 1ull && Bitcount(brd.WKnight) == 0ull && brd.BKnight == 0ull)
-						return true;
-
-					if (brd.WBishop == 1ull && brd.BBishop == 1ull && Bitcount(brd.WKnight) == 1ull && brd.BKnight == 0ull)
-						return true;
-
-					if (brd.WBishop == 1ull && brd.BBishop == 1ull && Bitcount(brd.WKnight) == 0ull && brd.BKnight == 1ull)
-						return true;
-
+					if (wBi == 1 && bBi == 0 && wKn == 0 && bKn == 0) return true;
+					if (wBi == 0 && bBi == 1 && wKn == 0 && bKn == 0) return true;
+					if (wBi == 1 && bBi == 1 && wKn == 0 && bKn == 0) return true;
+					if (wBi == 1 && bBi == 1 && wKn == 1 && bKn == 0) return true;
+					if (wBi == 1 && bBi == 1 && wKn == 0 && bKn == 1) return true;
 				}
-
 				return false;
 			}
 
@@ -202,7 +193,7 @@ namespace Search {
 
 					if (!inCheck && order < 9000) {
 						const int staticGain = order;
-						if ((stand_pat + staticGain + 750) <= alpha) {
+						if ((stand_pat + staticGain + 650) <= alpha) {
 							continue;
 						}
 					}
@@ -278,7 +269,7 @@ namespace Search {
 					const int staticEval = Evaluate(pos);
 
 					{
-						int margin = 300 * depth;
+						int margin = 320 * depth;
 						if ((staticEval - margin) >= beta) {
 							return (staticEval + beta) / 2;
 						}
@@ -363,9 +354,8 @@ namespace Search {
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						// more conservative LMR formula
-						int reduction = int(std::log2(depth) * 0.5f + std::log2(m) * 0.5f + 0.7f);
+						int reduction = int(std::log2(depth) * 0.5f + std::log2(m) * 0.5f + 2.0f);
 						//int reduction = int(std::log2(depth) * std::log2(m) * 0.5f + 0.5);
-						if(reduction && std::abs(alpha) < (MatVal - 100)) reduction--;
 						if (reduction && pvNode) reduction--;
 						if (reduction && order > 100) reduction--;
 						if (reduction && order > 2000) reduction--;
