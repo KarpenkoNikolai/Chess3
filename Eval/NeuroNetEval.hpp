@@ -9,8 +9,10 @@ namespace NN
 	class NeuroNetEval
 	{
 	public:
-		static void SetGenome(const std::vector<float>& genome) {
-			NeuroNetOpt::SetGenome(genome);
+		NeuroNetOpt m_nn;
+
+		void SetGenome(const std::vector<float>& genome) {
+			m_nn.SetGenome(genome);
 		}
 
 		static float EvaluateMat(const Gigantua::Board& brd)
@@ -26,9 +28,9 @@ namespace NN
 			return eval;
 		}
 
-		static float Evaluate(const Gigantua::Board& brd)
+		float Evaluate(const Gigantua::Board& brd)
 		{
-			float eval = NeuroNetOpt::Evaluate(brd);
+			float eval = m_nn.Evaluate(brd);
 			if (std::abs(eval) > 2400) {
 				const float material = EvaluateMat(brd);
 				eval += brd.status.WhiteMove() ? material : -material;

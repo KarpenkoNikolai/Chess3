@@ -112,7 +112,6 @@ public:
         cv.wait_for(lock, std::chrono::milliseconds(timeMs), [&done] { return done; });
 
         antEngine.Stop();
-        
 
         const uint16_t bestMove = winMove ? winMove : antEngine.BestMove();
 
@@ -306,10 +305,11 @@ std::vector<float> importNet(const std::string& fileName) {
 
 int main() {
     const std::vector<float> gen = importNet("genome0.txt");
-    NN::NeuroNetEval::SetGenome(gen);
+    NN::NeuroNetEval nne;
+    nne.SetGenome(gen);
    
-    std::function<float(const Gigantua::Board&)> costFunc = [](const Gigantua::Board& pos) {
-        return NN::NeuroNetEval::Evaluate(pos);
+    std::function<float(const Gigantua::Board&)> costFunc = [&nne](const Gigantua::Board& pos) {
+        return nne.Evaluate(pos);
      };
 
     EngineUCI engine(costFunc);

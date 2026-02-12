@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.5)
 project(EngineTest LANGUAGES CXX)
 
 add_compile_definitions(IS_64BIT)
+add_compile_options(-mavx2 -mfma)
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 

@@ -9,20 +9,41 @@
 
 namespace NN
 {
-	namespace NeuroNetOpt
+	struct NeuroNetOpt
 	{
 		static constexpr size_t InputSize = 10 * 64;
 		static constexpr std::array<uint32_t, 3> Architecture = { 512, 32, 32 };
 		static constexpr size_t ActiveIndexSize = 32;
 		static constexpr size_t HalfInputSize = Architecture[0] >> 1;
-		static int16_t mFirstWeights alignas(64)[InputSize * HalfInputSize * 64];
-		static int32_t mFirstBiases alignas(64)[HalfInputSize * 64];
-		static int8_t mWeights1 alignas(64)[Architecture[0] * Architecture[1]];
-		static int32_t mBiases1 alignas(64)[Architecture[1]];
-		static int8_t mWeights2 alignas(64)[Architecture[1] * Architecture[2]];
-		static int32_t mBiases2 alignas(64)[Architecture[2]];
-		static int8_t mWeights3 alignas(64)[Architecture[2]];
-		static int32_t mBiases3;
+		int16_t* mFirstWeights;
+		int32_t* mFirstBiases;
+		int8_t* mWeights1;
+		int32_t* mBiases1;
+		int8_t* mWeights2;
+		int32_t* mBiases2;
+		int8_t* mWeights3;
+		int32_t mBiases3;
+
+		NeuroNetOpt() {
+			mFirstWeights = (int16_t*)std::malloc(InputSize * HalfInputSize * 64 * sizeof(int16_t));
+			mFirstBiases = (int32_t*)std::malloc(HalfInputSize * 64 * sizeof(int32_t));
+			mWeights1 = (int8_t*)std::malloc(Architecture[0] * Architecture[1] * sizeof(int8_t));
+			mBiases1 = (int32_t*)std::malloc(Architecture[1] * sizeof(int32_t));
+			mWeights2 = (int8_t*)std::malloc(Architecture[1] * Architecture[2] * sizeof(int8_t));
+			mBiases2 = (int32_t*)std::malloc(Architecture[2] * sizeof(int32_t));
+			mWeights3 = (int8_t*)std::malloc(Architecture[2] * sizeof(int8_t));
+		}
+
+		~NeuroNetOpt()
+		{
+			free(mFirstWeights);
+			free(mFirstBiases);
+			free(mWeights1);
+			free(mBiases1);
+			free(mWeights2);
+			free(mBiases2);
+			free(mWeights3);
+		}
 
 		struct ActiveIndex {
 			uint16_t value[ActiveIndexSize];
@@ -201,7 +222,7 @@ namespace NN
 
 		}
 
-		static int32_t Evaluate(const Gigantua::Board& brd)
+		int32_t Evaluate(const Gigantua::Board& brd)
 		{
 			int8_t input[Architecture[0]];
 
@@ -232,86 +253,53 @@ namespace NN
 			return result / 16;
 		}
 
-		static void SetGenome(const std::vector<float>& genome)
+		void SetGenome(const std::vector<float>& genome)
 		{
 			size_t k = 0;
-			float maxVal = 0;
 			for(size_t b = 0; b < 64; b++)
 			{// first layer
 				for (size_t i = 0; i < InputSize; ++i) {
 					for (size_t j = 0; j < HalfInputSize; ++j) {
-						if (abs(genome[k]) > maxVal) maxVal = abs(genome[k]);
 						mFirstWeights[b * InputSize * HalfInputSize + i * HalfInputSize + j] = int16_t(genome[k++]);
 					}
 				}
 
-				std::cout << "mFirstWeights " << maxVal << std::endl;
-
-				maxVal = 0;
 				for (size_t j = 0; j < HalfInputSize; ++j) {
-					if (abs(genome[k]) > maxVal) maxVal = abs(genome[k]);
 					mFirstBiases[b * HalfInputSize + j] = int16_t(genome[k++]);
 				}
-
-				std::cout << "mFirstBiases " << maxVal << std::endl;
 			}
 
 			{
-				maxVal = 0;
 				for (size_t i = 0; i < Architecture[0]; ++i) {
 					for (size_t j = 0; j < Architecture[1]; ++j) {
-						if (abs(genome[k]) > maxVal) maxVal = abs(genome[k]);
 						mWeights1[i* Architecture[1]  + j] = int8_t(genome[k++] * 64.0f);
 					}
 				}
 
-				std::cout << "mWeights1 " << maxVal << std::endl;
-
-				maxVal = 0;
 				for (size_t j = 0; j < Architecture[1]; ++j) {
-					if (abs(genome[k]) > maxVal) maxVal = abs(genome[k]);
 					mBiases1[j] = int32_t(genome[k++] * 64.0f);
 				}
-
-				std::cout << "mBiases1 " << maxVal << std::endl;
 			}
 
 			{
-				maxVal = 0;
 				for (size_t i = 0; i < Architecture[1]; ++i) {
 					for (size_t j = 0; j < Architecture[2]; ++j) {
-						if (abs(genome[k]) > maxVal) maxVal = abs(genome[k]);
 						mWeights2[i * Architecture[2] + j] = int8_t(genome[k++] * 64.0f);
 					}
 				}
 
-				std::cout << "mWeights2 " << maxVal << std::endl;
-
-				maxVal = 0;
 				for (size_t j = 0; j < Architecture[2]; ++j) {
-					if (abs(genome[k]) > maxVal) maxVal = abs(genome[k]);
 					mBiases2[j] = int32_t(genome[k++] * 64.0f);
 				}
-
-				std::cout << "mBiases2 " << maxVal << std::endl;
 			}
 
 			{
-				maxVal = 0;
 				for (size_t i = 0; i < Architecture[2]; ++i) {
-					if (abs(genome[k]) > maxVal) maxVal = abs(genome[k]);
 					mWeights3[i] = int16_t(genome[k++] * 16.0f);
 				}
 
-				std::cout << "mWeights3 " << maxVal << std::endl;
-
-				maxVal = 0;
-				if (abs(genome[k]) > maxVal) maxVal = abs(genome[k]);
 				mBiases3 = int32_t(genome[k++] * 16.0f);
-
-				std::cout << "mBiases3 " << maxVal << std::endl;
 			}
 		}
-
-	}
+	};
 }

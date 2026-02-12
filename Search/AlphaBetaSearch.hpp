@@ -170,7 +170,7 @@ namespace Search {
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply >= 2);
+						collector.order[i] = SimpleSort(pos, mv, qply >= 4);
 					}
 				}
 				else {
@@ -265,7 +265,7 @@ namespace Search {
 
 				bool futilityPruning = false;
 
-				if (moveOrder < 100 && !pvNode && nodePtr.IsNull() && std::abs(alpha) < (MatVal - 100)) {
+				if (moveOrder < 100 && depth < 10 && !pvNode && std::abs(alpha) < (MatVal - 100)) {
 					const int staticEval = Evaluate(pos);
 
 					{
@@ -437,7 +437,7 @@ namespace Search {
 				ctx.repetition[0] = current.Hash;
 
 				searchStarted = true;
-				int score = MiniMaxAB<white>(ctx, current, depth, -100000, 100000);
+				int score = MiniMaxAB<white>(ctx, current, depth, -1000000, 1000000);
 				searchStarted = false;
 				bestMove = ctx.pvTable.GetBest().line[0];
 				return score;
