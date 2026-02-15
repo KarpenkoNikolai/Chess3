@@ -106,7 +106,7 @@ public:
             }
         }
         antEngine.SetHistory(h);
-        antEngine.Start(4, 8, timeMs, onDone);
+        antEngine.Start(4, 4, timeMs, onDone);
 
         std::unique_lock<std::mutex> lock(mtx);
         cv.wait_for(lock, std::chrono::milliseconds(timeMs), [&done] { return done; });

@@ -119,6 +119,33 @@ namespace Search {
 				return m_costFunc(brd);
 			}
 
+			// Helper to check if a score is a mate score
+			bool IsMateScore(int score) {
+				return std::abs(score) > (MatVal - MaxSearchDepth);
+			}
+
+			// Adjust mate score from TT: convert from stored (root-relative) to current ply
+			int ScoreFromTT(int score, int ply) {
+				if (score >= (MatVal - MaxSearchDepth)) {
+					return score - ply;
+				}
+				if (score <= -(MatVal - MaxSearchDepth)) {
+					return score + ply;
+				}
+				return score;
+			}
+
+			// Adjust mate score for TT: convert from current ply to root-relative
+			int ScoreToTT(int score, int ply) {
+				if (score >= (MatVal - MaxSearchDepth)) {
+					return score + ply;
+				}
+				if (score <= -(MatVal - MaxSearchDepth)) {
+					return score - ply;
+				}
+				return score;
+			}
+
 			static bool isDraw(const Gigantua::Board& brd) {
 				// keine Bauern, Türme, Damen => nur Leicht- und Springer bleiben
 				if (brd.WPawn == 0ull && brd.BPawn == 0ull &&
@@ -147,10 +174,10 @@ namespace Search {
 			template<bool white>
 			int QuiescenceSearch(const Gigantua::Board& pos, int alpha, int beta, int ply, int qply) {
 
-				if (ply >= MaxSearchDepth && std::abs(alpha) < (MatVal - 100)) return 0;
+				if (ply >= MaxSearchDepth) return 0;
 				if (isDraw(pos)) return 0;
 
-				if (std::abs(alpha) < (MatVal - 100)) {
+				if (!IsMateScore(alpha)) {
 					// global history repetition
 					for (size_t i = 0; i < history.size(); i++)
 						if (pos.Hash == history[i]) return 0;
@@ -162,6 +189,14 @@ namespace Search {
 				if (!inCheck) {
 					stand_pat = Evaluate(pos);
 					if (stand_pat >= beta) return beta;
+					
+					if (!IsMateScore(alpha)) {
+						// Delta pruning: skip if even best capture can't raise alpha
+						constexpr int QUEEN_VALUE = 2700;
+						if (stand_pat + QUEEN_VALUE + 200 < alpha) {
+							return alpha;
+						}
+					}
 				}
 
 				MoveCollector<white> collector;
@@ -191,9 +226,10 @@ namespace Search {
 					if (order < 5)
 						break;
 
-					if (!inCheck && order < 9000) {
+					if (!inCheck && order < 9000 && !IsMateScore(alpha)) {
 						const int staticGain = order;
-						if ((stand_pat + staticGain + 650) <= alpha) {
+						// Improved SEE-based pruning with better margin
+						if ((stand_pat + staticGain + 300) <= alpha) {
 							continue;
 						}
 					}
@@ -214,21 +250,23 @@ namespace Search {
 					}
 				}
 
-				if (inCheck && collector.size == 0)
-					alpha = ply - MatVal;
+				if (inCheck && collector.size == 0) {
+					alpha = -MatVal + ply;
+				}
 
 				return alpha;
 			}
 
 			template<bool white> int MiniMaxAB(
+				int8_t base_depth,
 				SearchCtx& ctx,
 				const Gigantua::Board& pos,
 				int8_t depth, int alpha, int beta, int moveOrder = 0)
 			{
-				if (ctx.ply >= MaxSearchDepth && std::abs(alpha) < (MatVal - 100)) return 0;
+				if (ctx.ply >= MaxSearchDepth && !IsMateScore(alpha)) return 0;
 				if (isDraw(pos)) return 0;
 
-				if (ctx.ply && std::abs(alpha) < (MatVal - 100)) {
+				if (ctx.ply && !IsMateScore(alpha)) {
 					for (size_t i = 0; i < history.size(); i++)
 						if (pos.Hash == history[i]) return 0;
 
@@ -249,9 +287,10 @@ namespace Search {
 				uint16_t bestMove = 0;
 
 				if (!pvNode && ctx.ply) {
-					int cost = tTable.Get(pos, alpha, beta, depth, ctx.ply, bestMove);
+					int cost = tTable.Get(pos, alpha, beta, depth, bestMove);
 					if (cost != TTable::NAN_VAL) {
-						return cost;
+						// Adjust mate scores from TT to current ply
+						return ScoreFromTT(cost, ctx.ply);
 					}
 				}
 
@@ -263,33 +302,44 @@ namespace Search {
 					return QuiescenceSearch<white>(pos, alpha, beta, ctx.ply, 0);
 				}
 
-				bool futilityPruning = false;
-
-				if (moveOrder < 100 && depth < 10 && !pvNode && std::abs(alpha) < (MatVal - 100)) {
-					const int staticEval = Evaluate(pos);
-
-					{
-						int margin = 320 * depth;
-						if ((staticEval - margin) >= beta) {
-							return (staticEval + beta) / 2;
-						}
-					}
-
-					{
-						int margin = 220 * depth;
-						if ((staticEval + margin) <= alpha)
-							futilityPruning = true;
-					}
-				}
-
 				MoveCollector<white> collector;
 				Gigantua::MoveList::EnumerateMoves<MoveCollector<white>, white>(collector, pos);
 
 				if (collector.size == 0) {
 					if (inCheck) {
-						return ctx.ply - MatVal;
+						return -MatVal + ctx.ply;
 					}
 					return 0;
+				}
+
+				bool futilityPruning = false;
+				if (moveOrder < 100 && depth < (base_depth - 1) && !pvNode) {
+					int staticEval = Evaluate(pos);
+
+					int razorMargin = 300 + 450 * depth;
+
+					if (staticEval + razorMargin < alpha) {
+						int qScore = QuiescenceSearch<white>(pos, alpha, beta, ctx.ply, 0);
+						if (qScore <= alpha) {
+							return qScore;
+						}
+					}
+
+					// Reverse Futility Pruning (Static Null Move)
+					{
+						int margin = 300 * depth;
+						if ((staticEval - margin) >= beta) {
+							return staticEval - margin;
+						}
+					}
+
+					// Extended Futility Pruning
+					{
+						int margin = 220 * depth + 80;
+						if ((staticEval + margin) <= alpha) {
+							futilityPruning = true;
+						}
+					}
 				}
 
 				if (!nodePtr.IsNull()) {
@@ -327,9 +377,6 @@ namespace Search {
 				TTable::Flag flag = TTable::Flag::Alpha;
 				uint8_t searchSize = collector.size;
 
-				const int movePruneThreshold = 0;
-				const int depthPruneThreshold = 0;
-
 				for (uint8_t m = 0; m < searchSize; m++) {
 					if (!searchStarted) break;
 
@@ -339,8 +386,11 @@ namespace Search {
 					const auto order = collector.order[collector.index[m]];
 					const auto next = move.play(pos);
 
-					if (futilityPruning && m > 4)
-						break;
+					// Late Move Pruning: skip late quiet moves at low depth
+					if (futilityPruning && 
+						m > 2 + depth * depth) {
+						continue;
+					}
 
 					ctx.ply++;
 
@@ -349,26 +399,47 @@ namespace Search {
 						ctx.repetition[ctx.ply] = next.Hash;
 					}
 
-					const bool reduce = m > movePruneThreshold && depth > depthPruneThreshold && !inCheck;
+					const bool isQuiet = order < 200;
+					
+					const bool reduce =
+						m > 0 &&
+						depth > 0 &&
+						!inCheck &&
+						isQuiet;
 
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
-						// more conservative LMR formula
-						int reduction = int(std::log2(depth) * 0.5f + std::log2(m) * 0.5f + 2.0f);
-						//int reduction = int(std::log2(depth) * std::log2(m) * 0.5f + 0.5);
-						if (reduction && pvNode) reduction--;
-						if (reduction && order > 100) reduction--;
-						if (reduction && order > 2000) reduction--;
-						if (reduction && order > 3000) reduction--;
+						// Improved LMR with better depth/move scaling
+						int reduction = int(0.75f + std::log2(depth) * 0.5f + std::log2(m) * 0.5f);
+						
+						// Reduce reduction for PV nodes
+						if (pvNode) reduction = std::max(0, reduction - 1);
+						
+						// Don't reduce good tactical moves
+						if (order > 100) reduction = std::max(0, reduction - 1);
+
+						if (IsMateScore(alpha)) reduction = 0;// std::max(0, reduction - 1);
+						
+						// Reduce more for late moves
+						if (m > 12) reduction++;
+						
+						reduction = std::min(reduction, depth - 1);
 
 						// try a null-window search with reduction
-						while ((score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order)) > alpha
-							&& reduction > 0
-							) reduction = 0;
+						score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order);
+						
+						// If it fails high, re-search at full depth
+						if (score > alpha) {
+							score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -alpha - 1, -alpha, order);
+						}
+					} else if (m > 0 && pvNode) {
+						// PVS: null-window search first
+						score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -alpha - 1, -alpha, order);
 					}
 
-					if (score > alpha)
-						score = -MiniMaxAB<!white>(ctx, next, depth - 1, -beta, -alpha, order);
+					// Full window search for first move or if null-window failed high
+					if (score > alpha || m == 0)
+						score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -beta, -alpha, order);
 
 					ctx.ply--;
 
@@ -379,15 +450,18 @@ namespace Search {
 						ctx.pvTable.table[ctx.ply].Compose(move.move, ctx.pvTable.table[ctx.ply + 1]);
 
 						if (alpha >= beta) {
-							ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
-							ctx.killerMove1[ctx.ply] = move.move;
+							if (isQuiet) {
+								ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
+								ctx.killerMove1[ctx.ply] = move.move;
+							}
 							flag = TTable::Flag::Beta;
 							break;
 						}
 					}
 				}
 
-				tTable.Put(pos, alpha, bestMove, depth, ctx.ply, flag);
+				// Adjust mate scores to TT (convert to root-relative)
+				tTable.Put(pos, ScoreToTT(alpha, ctx.ply), bestMove, depth, flag);
 				return alpha;
 			}
 
@@ -437,7 +511,7 @@ namespace Search {
 				ctx.repetition[0] = current.Hash;
 
 				searchStarted = true;
-				int score = MiniMaxAB<white>(ctx, current, depth, -1000000, 1000000);
+				int score = MiniMaxAB<white>(depth, ctx, current, depth, -1000000, 1000000);
 				searchStarted = false;
 				bestMove = ctx.pvTable.GetBest().line[0];
 				return score;
@@ -496,14 +570,14 @@ namespace Search {
 							int score = 0;
 							int attempts = 0;
 							int prevScore = currentBestScore; // shared best score from previous iteration (may be 0)
-							bool useAspiration = (prevScore != 0);
+							bool useAspiration = (prevScore != 0 && !IsMateScore(prevScore));
 
 							// Try aspiration and widen if necessary (limited retries)
 							do {
 								int alpha = useAspiration && attempts == 0 ? prevScore - window : -1000000;
 								int beta  = useAspiration && attempts == 0 ? prevScore + window : 1000000;
 
-								score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, alpha, beta);
+								score = MiniMaxAB<white>(depth, searchThreads[i].ctx, pos, depth, alpha, beta);
 
 								// if fail-low or fail-high, widen and retry
 								if (score <= alpha) {
@@ -533,7 +607,7 @@ namespace Search {
 									}
 								}
 
-								if (abs(score) > MatVal - 100) {
+								if (IsMateScore(score)) {
 									if (onWin) {
 										onWin(BestMove());
 									}

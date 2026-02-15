@@ -121,7 +121,11 @@ namespace Search {
 			if (move.who(pos) == Gigantua::BoardPiece::Knight) result += 2;
 			if (move.who(pos) == Gigantua::BoardPiece::Rook) result += 1;
 		}
-		
+
+		if (!result) {
+			result += 200 / (Gigantua::MoveList::MovesCount<!white>(next) + 1);
+		}
+
 		if (move.type() == Gigantua::MoveType::PawnMove) result += 5;
 
 		return result;

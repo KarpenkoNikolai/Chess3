@@ -11,7 +11,6 @@ namespace Search {
 	struct TTable {
 		const size_t HashTableSize;
 
-
 		enum class Flag{
 			Value = 0,
 			Alpha,
@@ -87,7 +86,7 @@ namespace Search {
 			return 0;	
 		}
 
-		int Get(const Gigantua::Board& brd, int alpha, int beta, uint8_t depth, int ply, uint16_t& bestMove) const {
+		int Get(const Gigantua::Board& brd, int alpha, int beta, uint8_t depth, uint16_t& bestMove) const {
 			Bucket& bucket = hashTable[brd.Hash % HashTableSize];
 			for (size_t i = 0; i < BucketSize; i++) {
 				Node& node = bucket[i];
@@ -97,11 +96,6 @@ namespace Search {
 
 					if (node.ExtractDepth() >= depth) {
 						int score = node.ExtractScore();
-
-						if (score > 500000 - 50 && score <= 500000)
-							score -= ply;
-						else if (score < -500000 + 50 && score >= -500000)
-							score += ply;
 
 						switch (node.ExtractFlag()) {
 						case Flag::Value:
@@ -127,7 +121,7 @@ namespace Search {
 			return NAN_VAL;
 		}
 
-		void Put(const Gigantua::Board& brd, int cost, uint16_t bestMove, uint8_t depth, int ply, Flag flag) {
+		void Put(const Gigantua::Board& brd, int cost, uint16_t bestMove, uint8_t depth, Flag flag) {
 			Bucket& bucket = hashTable[brd.Hash % HashTableSize];
 
 			uint8_t minDepth = 255;
@@ -151,12 +145,6 @@ namespace Search {
 					minIndex = i;
 				}
 			}
-
-			if (cost > 500000 - 50 && cost <= 500000)
-				cost += ply;
-			else if (cost < -500000 + 50 && cost >= -500000)
-				cost -= ply;
-
 
 			bucket[minIndex].brd = brd;
 			bucket[minIndex].smpData = Node::PackData(cost, bestMove, depth, flag);
