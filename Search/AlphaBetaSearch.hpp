@@ -147,7 +147,7 @@ namespace Search {
 			}
 
 			static bool isDraw(const Gigantua::Board& brd) {
-				// keine Bauern, Türme, Damen => nur Leicht- und Springer bleiben
+				// Keine Bauern, Türme, Damen => nur Leichtfiguren bleiben
 				if (brd.WPawn == 0ull && brd.BPawn == 0ull &&
 					brd.WRook == 0ull && brd.BRook == 0ull &&
 					brd.WQueen == 0ull && brd.BQueen == 0ull) {
@@ -157,18 +157,53 @@ namespace Search {
 					const auto wBi = Bitcount(brd.WBishop);
 					const auto bBi = Bitcount(brd.BBishop);
 
-					// klassische triviale Remisfälle
+					// K vs K
+					if (wKn == 0 && bKn == 0 && wBi == 0 && bBi == 0) return true;
+
+					// K+N vs K oder K vs K+N
 					if (wBi == 0 && bBi == 0 && wKn == 1 && bKn == 0) return true;
 					if (wBi == 0 && bBi == 0 && wKn == 0 && bKn == 1) return true;
-					if (wBi == 0 && bBi == 0 && wKn == 1 && bKn == 1) return true;
 
+					// K+B vs K oder K vs K+B
 					if (wBi == 1 && bBi == 0 && wKn == 0 && bKn == 0) return true;
 					if (wBi == 0 && bBi == 1 && wKn == 0 && bKn == 0) return true;
-					if (wBi == 1 && bBi == 1 && wKn == 0 && bKn == 0) return true;
-					if (wBi == 1 && bBi == 1 && wKn == 1 && bKn == 0) return true;
-					if (wBi == 1 && bBi == 1 && wKn == 0 && bKn == 1) return true;
+
+					// K+N vs K+N
+					if (wBi == 0 && bBi == 0 && wKn == 1 && bKn == 1) return true;
+
+					// K+B vs K+B (gleichfarbige Läufer)
+					if (wBi == 1 && bBi == 1 && wKn == 0 && bKn == 0) {
+						// Prüfe ob Läufer auf gleichen Farben stehen
+						const bool wBishopLight = (brd.WBishop & 0xAA55AA55AA55AA55ull) != 0;
+						const bool bBishopLight = (brd.BBishop & 0xAA55AA55AA55AA55ull) != 0;
+						if (wBishopLight == bBishopLight) return true;
+					}
+
+					// K+B+N vs K
+					if (wBi == 1 && bBi == 0 && wKn == 1 && bKn == 0) return false; // Mattfähig
+					if (wBi == 0 && bBi == 1 && wKn == 0 && bKn == 1) return false; // Mattfähig
+
+					// K+2N vs K (theoretisch Remis in Praxis)
+					if (wBi == 0 && bBi == 0 && wKn == 2 && bKn == 0) return true;
+					if (wBi == 0 && bBi == 0 && wKn == 0 && bKn == 2) return true;
 				}
 				return false;
+			}
+
+			static bool isEndgame(const Gigantua::Board& brd) {
+				const int totalPieces = Bitcount(brd.WPawn | brd.BPawn | brd.WKnight | brd.BKnight |
+					brd.WBishop | brd.BBishop | brd.WRook | brd.BRook | brd.WQueen | brd.BQueen);
+				return totalPieces <= 10; // Endspiel wenn <= 10 Figuren + Könige
+			}
+
+			static int getEndgamePhase(const Gigantua::Board& brd) {
+				// 0 = Eröffnung/Mittelspiel, 256 = reines Endspiel
+				const int queens = Bitcount(brd.WQueen | brd.BQueen);
+				const int rooks = Bitcount(brd.WRook | brd.BRook);
+				const int minors = Bitcount(brd.WKnight | brd.BKnight | brd.WBishop | brd.BBishop);
+
+				int phase = 256 - queens * 40 - rooks * 20 - minors * 10;
+				return std::clamp(phase, 0, 256);
 			}
 
 			template<bool white>
@@ -566,7 +601,7 @@ namespace Search {
 							const auto startTime = std::chrono::high_resolution_clock::now();
 
 							// Aspiration window logic:
-							int window = 120; // initial aspiration window in centipawns
+							int window = isEndgame(pos) ? 80 : 120; // Kleineres Window im Endspiel
 							int score = 0;
 							int attempts = 0;
 							int prevScore = currentBestScore; // shared best score from previous iteration (may be 0)
