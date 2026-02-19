@@ -10,12 +10,12 @@ namespace Search {
 
 
 	struct GameTree {
-		static constexpr uint8_t BucketSize = 16;
+		static constexpr uint8_t BucketSize = 32;
 		const size_t HashTableSize;
 
 		struct Edge {
 		private:
-			static constexpr float Smoothing = 1.0;
+			static constexpr float Smoothing = 0.01f;
 			uint16_t move = 0;
 			uint32_t entries = 0;
 			float sugar = 0;
@@ -37,14 +37,11 @@ namespace Search {
 
 			template<bool white>
 			void AddSugar(float s) {
-				if constexpr (white) sugar += s;
-				else toxin += s;
+				if constexpr (white) sugar += s * 0.001f;
+				else toxin += s * 0.001f;
 			}
 
 			void AddEntries(float cost) {
-				toxin *= 0.9999990f;
-				sugar *= 0.9999990f;
-
 				entries++;
 			}
 			void MergeEntries(uint32_t e) { entries += e; }
@@ -52,17 +49,17 @@ namespace Search {
 			template <bool white>
 			float getProbability() const
 			{
-				if (entries == 0) return 4000.0f;
+				if (entries == 0) return 40000.0f;
 
 				const auto s = (sugar + Smoothing);
 				const auto t = (toxin + Smoothing);
 
 				if constexpr (white) {
-					const auto d = (s) / (t + 20 * entries);
+					const auto d = (s) / (entries);
 					return d;
 				}
 				else {
-					const auto d = (t) / (s + 20 * entries);
+					const auto d = (t) / (entries);
 					return d;
 				}
 			}

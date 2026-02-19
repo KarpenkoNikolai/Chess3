@@ -107,13 +107,12 @@ namespace Ant {
 
 		std::function<float(const Gigantua::Board&)> m_costFunc;
 
-		static constexpr float MatVal = 200000.0f;
+		static constexpr float MatVal = 10000.0f;
 
 		Gigantua::Board m_current;
 		AlphaBeta::SearchEngine m_abEngine;
 		std::array<uint64_t, 16> history;
-		static constexpr size_t AbAnt = 64;
-		static constexpr size_t MaxAnt = 64;
+		static constexpr size_t MaxAnt = 256;
 
 		enum class AntStepResult
 		{
@@ -126,7 +125,7 @@ namespace Ant {
 		};
 
 		template <bool MoveWhite>
-		inline AntStepResult DoStep(SearchContext& ctx, bool abAnt, bool maxAnt,
+		inline AntStepResult DoStep(SearchContext& ctx, bool maxAnt,
 			Gigantua::Board& position, uint8_t& ply,
 			std::array<uint64_t, SearchContext::MaxPath>& repetition)
 		{
@@ -176,19 +175,6 @@ namespace Ant {
 					}
 				}
 			}
-			else if (abAnt) {
-				const auto abline = m_abEngine.GetBestLine();
-				if (ply < abline.size) {
-					const auto abMove = abline.line[ply];
-					for (uint8_t k = 0; k < edges.size(); k++) {
-						if (edges[k].Move() == abMove) {
-							isRndAnt = false;
-							moveIndex = k;
-							break;
-						}
-					}
-				}
-			}
 
 			if (isRndAnt) {
 				for (uint8_t k = 0; k < edges.size(); k++) {
@@ -229,12 +215,15 @@ namespace Ant {
 			repetition[ply] = position.Hash;
 
 			if (ply > 2) {
-				for (int i = ply - 2; i > -1; i -= 2) {
+				for (int i = ply - 2; i >= 0; i -= 2) {
 					if (position.Hash == repetition[i]) {
 						return AntStepResult::inLoop;
 					}
 				}
 			}
+
+			if(ply > SearchContext::MaxPath - 5)
+				return AntStepResult::inLoop;
 
 			if (edges[moveIndex].Entries() == 0) {
 				return AntStepResult::EndPath;
@@ -244,10 +233,8 @@ namespace Ant {
 		}
 
 		template <bool white>
-		void RunAnt(SearchContext& ctx, bool abAnt, bool maxAnt) {
+		void RunAnt(SearchContext& ctx, bool maxAnt) {
 			uint8_t ply = 0;
-			const float currCost = float(m_abEngine.BestScore());
-			float lastCost = currCost;
 			Gigantua::Board position = m_current;
 			AntStepResult stepResult = AntStepResult::EndPath;
 			std::array<uint64_t, SearchContext::MaxPath> repetition = { 0 };
@@ -255,13 +242,13 @@ namespace Ant {
 			while (ply < SearchContext::MaxPath - 2) {
 				// first move: this is "my" move when RunAnt<white> and DoStep<white, true>
 				{
-					stepResult = DoStep<white>(ctx, abAnt, maxAnt, position, ply, repetition);
+					stepResult = DoStep<white>(ctx, maxAnt, position, ply, repetition);
 					if (stepResult != AntStepResult::Sucess) break;
 				}
 
 				// second move: opponent move
 				{
-					stepResult = DoStep<!white>(ctx, abAnt, maxAnt, position, ply, repetition);
+					stepResult = DoStep<!white>(ctx, maxAnt, position, ply, repetition);
 					if (stepResult != AntStepResult::Sucess) break;
 				}
 			}// while path
@@ -270,25 +257,28 @@ namespace Ant {
 				return;
 			}
 
+			float cost = 0;
 			if(stepResult == AntStepResult::isMate) {
 				if(white == position.status.WhiteMove())
-					lastCost = std::max(10000.0f, -MatVal + 10000 * ply);
+					cost = std::min(-1000.0f, -MatVal + 100 * ply);
 				else
-					lastCost = std::max(10000.0f, MatVal - 10000 * ply);
+					cost = std::max(1000.0f, MatVal - 100 * ply);
 			}
-			else if (stepResult == AntStepResult::EndPath) {
-				if (white == position.status.WhiteMove())
-					lastCost = m_costFunc(position);
-				else
-					lastCost = -m_costFunc(position);
-			}
-			
-			float cost = lastCost - currCost;
+			else {
 
-			if (stepResult == AntStepResult::isPat || stepResult == AntStepResult::inLoop) {
-				if(currCost > 100) cost = -500.0f;
-				else cost = -500;
+				if (position.status.WhiteMove() == white && Gigantua::MoveList::InCheck<white>(position))
+					cost = -100;
+				else if (position.status.WhiteMove() != white && Gigantua::MoveList::InCheck<!white>(position))
+					cost = 100;
+				else if (white == position.status.WhiteMove())
+					cost = m_costFunc(position);
+				else
+					cost = -m_costFunc(position);
+
 			}
+
+			if (stepResult == AntStepResult::isPat || stepResult == AntStepResult::inLoop)
+				cost = 0;
 
 			if (cost > std::numeric_limits<float>::epsilon()) {
 				for (int8_t i = 0; i < ply; i++) {
@@ -362,33 +352,23 @@ namespace Ant {
 			for (uint8_t i = 0; i < threadNumber; i++) {
 				m_threads[i].started = true;
 				m_threads[i].thread.reset(new std::thread([this, i]() {
-					size_t abAnt = 0;
 					size_t maxAnt = 0;
 					while (m_threads[i].started) {
-						abAnt++;
 						maxAnt++;
 
-						if (abAnt > AbAnt) {
+						if (maxAnt > MaxAnt) {
 							if (m_current.status.WhiteMove())
-								RunAnt<true>(m_threads[i].ctx, true, false);
+								RunAnt<true>(m_threads[i].ctx, true);
 							else {
-								RunAnt<false>(m_threads[i].ctx, true, false);
-							}
-							abAnt = 0;
-						}
-						else if (maxAnt > MaxAnt) {
-							if (m_current.status.WhiteMove())
-								RunAnt<true>(m_threads[i].ctx, false, true);
-							else {
-								RunAnt<false>(m_threads[i].ctx, false, true);
+								RunAnt<false>(m_threads[i].ctx, true);
 							}
 							maxAnt = 0;
 						}
 						else {
 							if (m_current.status.WhiteMove())
-								RunAnt<true>(m_threads[i].ctx, false, false);
+								RunAnt<true>(m_threads[i].ctx, false);
 							else {
-								RunAnt<false>(m_threads[i].ctx, false, false);
+								RunAnt<false>(m_threads[i].ctx, false);
 							}
 						}
 					}

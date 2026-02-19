@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 
 #include "../Gigantua/ChessBase.hpp"
 #include "../Gigantua/MoveList.hpp"
@@ -11,7 +11,6 @@
 #include <functional>
 #include <unordered_set>
 #include <chrono>
-#include <mutex>
 #include <map>
 #include <algorithm>
 #include <limits>
@@ -33,7 +32,8 @@ namespace Search {
 		private:
 			static constexpr int MatVal = 500000;
 			static constexpr int Killer1MoveCost = 500;
-			static constexpr int Killer2MoveCost = 100;
+			static constexpr int Killer2MoveCost = 300;
+			static constexpr int CounterMoveCost = 400;
 
 			Search::TTable tTable;
 
@@ -69,13 +69,14 @@ namespace Search {
 				PvLine GetBest() const { return table[0]; }
 			};
 
-			// Search context per thread: enthält jetzt die History-Tabelle (mutexfrei, pro-thread)
+			// Search context per thread
 			struct SearchCtx {
 				uint8_t ply = 0;
 				PvTable pvTable;
 				std::array<uint16_t, MaxSearchDepth> killerMove1 = { 0 };
 				std::array<uint16_t, MaxSearchDepth> killerMove2 = { 0 };
 				std::array<uint64_t, MaxSearchDepth> repetition = { 0 };
+				std::array<uint16_t, 65536> counterMoves = { 0 }; // Counter move heuristic
 
 				void Clear() {
 					ply = 0;
@@ -83,6 +84,7 @@ namespace Search {
 					killerMove1.fill(0);
 					killerMove2.fill(0);
 					repetition.fill(0);
+					counterMoves.fill(0);
 				}
 			};
 
@@ -107,9 +109,6 @@ namespace Search {
 			const GameTree* antTreePtr = nullptr;
 			std::array<uint64_t, 16> history;
 
-			// Mutex used by root-splitting threads to update shared best result
-			std::mutex rootSplitMutex;
-
 			void ClearSearch()
 			{
 				tTable.Clear();
@@ -119,13 +118,11 @@ namespace Search {
 				return m_costFunc(brd);
 			}
 
-			// Helper to check if a score is a mate score
-			bool IsMateScore(int score) {
+			bool IsMateScore(int score) const {
 				return std::abs(score) > (MatVal - MaxSearchDepth);
 			}
 
-			// Adjust mate score from TT: convert from stored (root-relative) to current ply
-			int ScoreFromTT(int score, int ply) {
+			int ScoreFromTT(int score, int ply) const {
 				if (score >= (MatVal - MaxSearchDepth)) {
 					return score - ply;
 				}
@@ -135,8 +132,7 @@ namespace Search {
 				return score;
 			}
 
-			// Adjust mate score for TT: convert from current ply to root-relative
-			int ScoreToTT(int score, int ply) {
+			int ScoreToTT(int score, int ply) const {
 				if (score >= (MatVal - MaxSearchDepth)) {
 					return score + ply;
 				}
@@ -147,7 +143,6 @@ namespace Search {
 			}
 
 			static bool isDraw(const Gigantua::Board& brd) {
-				// Keine Bauern, Türme, Damen => nur Leichtfiguren bleiben
 				if (brd.WPawn == 0ull && brd.BPawn == 0ull &&
 					brd.WRook == 0ull && brd.BRook == 0ull &&
 					brd.WQueen == 0ull && brd.BQueen == 0ull) {
@@ -157,33 +152,21 @@ namespace Search {
 					const auto wBi = Bitcount(brd.WBishop);
 					const auto bBi = Bitcount(brd.BBishop);
 
-					// K vs K
 					if (wKn == 0 && bKn == 0 && wBi == 0 && bBi == 0) return true;
-
-					// K+N vs K oder K vs K+N
 					if (wBi == 0 && bBi == 0 && wKn == 1 && bKn == 0) return true;
 					if (wBi == 0 && bBi == 0 && wKn == 0 && bKn == 1) return true;
-
-					// K+B vs K oder K vs K+B
 					if (wBi == 1 && bBi == 0 && wKn == 0 && bKn == 0) return true;
 					if (wBi == 0 && bBi == 1 && wKn == 0 && bKn == 0) return true;
-
-					// K+N vs K+N
 					if (wBi == 0 && bBi == 0 && wKn == 1 && bKn == 1) return true;
 
-					// K+B vs K+B (gleichfarbige Läufer)
 					if (wBi == 1 && bBi == 1 && wKn == 0 && bKn == 0) {
-						// Prüfe ob Läufer auf gleichen Farben stehen
 						const bool wBishopLight = (brd.WBishop & 0xAA55AA55AA55AA55ull) != 0;
 						const bool bBishopLight = (brd.BBishop & 0xAA55AA55AA55AA55ull) != 0;
 						if (wBishopLight == bBishopLight) return true;
 					}
 
-					// K+B+N vs K
-					if (wBi == 1 && bBi == 0 && wKn == 1 && bKn == 0) return false; // Mattfähig
-					if (wBi == 0 && bBi == 1 && wKn == 0 && bKn == 1) return false; // Mattfähig
-
-					// K+2N vs K (theoretisch Remis in Praxis)
+					if (wBi == 1 && bBi == 0 && wKn == 1 && bKn == 0) return false;
+					if (wBi == 0 && bBi == 1 && wKn == 0 && bKn == 1) return false;
 					if (wBi == 0 && bBi == 0 && wKn == 2 && bKn == 0) return true;
 					if (wBi == 0 && bBi == 0 && wKn == 0 && bKn == 2) return true;
 				}
@@ -193,11 +176,10 @@ namespace Search {
 			static bool isEndgame(const Gigantua::Board& brd) {
 				const int totalPieces = Bitcount(brd.WPawn | brd.BPawn | brd.WKnight | brd.BKnight |
 					brd.WBishop | brd.BBishop | brd.WRook | brd.BRook | brd.WQueen | brd.BQueen);
-				return totalPieces <= 10; // Endspiel wenn <= 10 Figuren + Könige
+				return totalPieces <= 10;
 			}
 
 			static int getEndgamePhase(const Gigantua::Board& brd) {
-				// 0 = Eröffnung/Mittelspiel, 256 = reines Endspiel
 				const int queens = Bitcount(brd.WQueen | brd.BQueen);
 				const int rooks = Bitcount(brd.WRook | brd.BRook);
 				const int minors = Bitcount(brd.WKnight | brd.BKnight | brd.WBishop | brd.BBishop);
@@ -207,16 +189,28 @@ namespace Search {
 			}
 
 			template<bool white>
-			int QuiescenceSearch(const Gigantua::Board& pos, int alpha, int beta, int ply, int qply) {
+			static bool hasNonPawnMaterial(const Gigantua::Board& brd) {
+				if constexpr (white) {
+					return (brd.WKnight | brd.WBishop | brd.WRook | brd.WQueen) != 0ull;
+				}
+				else {
+					return (brd.BKnight | brd.BBishop | brd.BRook | brd.BQueen) != 0ull;
+				}
+			}
 
-				if (ply >= MaxSearchDepth) return 0;
+			template<bool white>
+			int QuiescenceSearch(SearchCtx& ctx, const Gigantua::Board& pos, int alpha, int beta, int qply) {
+
+				if (ctx.ply >= MaxSearchDepth) return 0;
 				if (isDraw(pos)) return 0;
 
-				if (!IsMateScore(alpha)) {
-					// global history repetition
-					for (size_t i = 0; i < history.size(); i++)
-						if (pos.Hash == history[i]) return 0;
+				for (int i = int(ctx.ply) - 2; i >= 0; i-=2) {
+					if (pos.Hash == ctx.repetition[i])
+						return 0;
 				}
+
+				for (size_t i = 0; i < history.size(); i++)
+					if (pos.Hash == history[i]) return 0;
 
 				int stand_pat = 0;
 				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
@@ -225,12 +219,9 @@ namespace Search {
 					stand_pat = Evaluate(pos);
 					if (stand_pat >= beta) return beta;
 					
-					if (!IsMateScore(alpha)) {
-						// Delta pruning: skip if even best capture can't raise alpha
-						constexpr int QUEEN_VALUE = 2700;
-						if (stand_pat + QUEEN_VALUE + 200 < alpha) {
-							return alpha;
-						}
+					constexpr int QUEEN_VALUE = 2700;
+					if (stand_pat + QUEEN_VALUE + 200 < alpha) {
+						return alpha;
 					}
 				}
 
@@ -258,13 +249,12 @@ namespace Search {
 					collector.SortMoves(i);
 					const int order = collector.order[collector.index[i]];
 
-					if (order < 5)
+					if (order < 50)
 						break;
 
-					if (!inCheck && order < 9000 && !IsMateScore(alpha)) {
+					if (!inCheck && order < 9000) {
 						const int staticGain = order;
-						// Improved SEE-based pruning with better margin
-						if ((stand_pat + staticGain + 300) <= alpha) {
+						if ((stand_pat + staticGain + 600) <= alpha) {
 							continue;
 						}
 					}
@@ -274,10 +264,17 @@ namespace Search {
 					}
 
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[i]]);
-
 					const auto next = move.play(pos);
 
-					int score = -QuiescenceSearch<!white>(next, -beta, -alpha, ply + 1, qply);
+					ctx.ply++;
+					if (ctx.ply < MaxSearchDepth) {
+						ctx.repetition[ctx.ply] = next.Hash;
+					}
+
+					int score = -QuiescenceSearch<!white>(ctx, next, -beta, -alpha, qply);
+
+					ctx.ply--;
+
 					if (score > alpha) {
 						alpha = score;
 						if (alpha >= beta)
@@ -286,7 +283,7 @@ namespace Search {
 				}
 
 				if (inCheck && collector.size == 0) {
-					alpha = -MatVal + ply;
+					alpha = -MatVal + ctx.ply;
 				}
 
 				return alpha;
@@ -296,17 +293,19 @@ namespace Search {
 				int8_t base_depth,
 				SearchCtx& ctx,
 				const Gigantua::Board& pos,
-				int8_t depth, int alpha, int beta, int moveOrder = 0)
+				int8_t depth, int alpha, int beta, uint16_t prevMove = 0, int myOrder = 0)
 			{
-				if (ctx.ply >= MaxSearchDepth && !IsMateScore(alpha)) return 0;
+				if (depth < 0) depth = 0;
+				if (ctx.ply >= MaxSearchDepth) return 0;
 				if (isDraw(pos)) return 0;
 
-				if (ctx.ply && !IsMateScore(alpha)) {
+				const bool rootNode = (ctx.ply == 0);
+
+				if (!rootNode) {
 					for (size_t i = 0; i < history.size(); i++)
 						if (pos.Hash == history[i]) return 0;
 
-					// per-thread repetition check (same side positions only)
-					for (int i = int(ctx.ply) - 2; i >= 0; i--) {
+					for (int i = int(ctx.ply) - 2; i >= 0; i-=2) {
 						if (pos.Hash == ctx.repetition[i])
 							return 0;
 					}
@@ -321,10 +320,10 @@ namespace Search {
 				const bool pvNode = (beta - alpha) > 1;
 				uint16_t bestMove = 0;
 
+				// TT probe with improved cutoff
 				if (!pvNode && ctx.ply) {
 					int cost = tTable.Get(pos, alpha, beta, depth, bestMove);
 					if (cost != TTable::NAN_VAL) {
-						// Adjust mate scores from TT to current ply
 						return ScoreFromTT(cost, ctx.ply);
 					}
 				}
@@ -334,7 +333,7 @@ namespace Search {
 				ctx.pvTable.table[ctx.ply].Clear();
 
 				if (depth < 1 && !inCheck) {
-					return QuiescenceSearch<white>(pos, alpha, beta, ctx.ply, 0);
+					return QuiescenceSearch<white>(ctx, pos, alpha, beta, 0);
 				}
 
 				MoveCollector<white> collector;
@@ -348,69 +347,59 @@ namespace Search {
 				}
 
 				bool futilityPruning = false;
-				if (moveOrder < 100 && depth < (base_depth - 1) && !pvNode) {
+
+				if (myOrder < 200 && !pvNode && !inCheck && alpha > -20000 && !rootNode) {
 					int staticEval = Evaluate(pos);
 
-					int razorMargin = 300 + 450 * depth;
-
-					if (staticEval + razorMargin < alpha) {
-						int qScore = QuiescenceSearch<white>(pos, alpha, beta, ctx.ply, 0);
-						if (qScore <= alpha) {
-							return qScore;
-						}
-					}
-
-					// Reverse Futility Pruning (Static Null Move)
-					{
-						int margin = 300 * depth;
-						if ((staticEval - margin) >= beta) {
-							return staticEval - margin;
-						}
+					// Reverse Futility Pruning
+					int rfpMargin = 220 * depth;
+					if ((staticEval - rfpMargin) >= beta && hasNonPawnMaterial<white>(pos)) {
+						return (staticEval + beta) / 2;
 					}
 
 					// Extended Futility Pruning
-					{
-						int margin = 220 * depth + 80;
-						if ((staticEval + margin) <= alpha) {
-							futilityPruning = true;
-						}
+					int futilityMargin = 220 * depth;
+					if ((staticEval + futilityMargin) < alpha) {
+						futilityPruning = true;
 					}
 				}
 
+				// Move ordering with improved heuristics
+				uint16_t antMove = 0;
 				if (!nodePtr.IsNull()) {
 					float max_e = 0;
-					uint16_t max_m1 = 0;
 					for (uint8_t j = 0; j < nodePtr->edges.size(); j++) {
+						if(nodePtr->edges[j].Entries() == 0) continue;
+
 						const auto e = nodePtr->edges[j].getProbability<white>();
 						const auto m = nodePtr->edges[j].Move();
 						if (e > max_e) {
 							max_e = e;
-							max_m1 = m;
+							antMove = m;
 						}
 					}
-
-					for (uint8_t i = 0; i < collector.size; i++) {
-						const auto mcode = collector.moves[i];
-						const Gigantua::Board::Move<white> mv(mcode);
-						collector.order[i] = bestMove == mcode ? 1000000 : SimpleSort(pos, mv);
-
-						if (mcode == max_m1) collector.order[i] += 2000000;
-						if (mcode == ctx.killerMove1[ctx.ply]) collector.order[i] += Killer1MoveCost;
-						if (mcode == ctx.killerMove2[ctx.ply]) collector.order[i] += Killer2MoveCost;
-					}
 				}
-				else {
-					for (uint8_t i = 0; i < collector.size; i++) {
-						const auto mcode = collector.moves[i];
-						const Gigantua::Board::Move<white> mv(mcode);
-						collector.order[i] = bestMove == mcode ? 1000000 : SimpleSort(pos, mv);
-						if (mcode == ctx.killerMove1[ctx.ply]) collector.order[i] += Killer1MoveCost;
-						if (mcode == ctx.killerMove2[ctx.ply]) collector.order[i] += Killer2MoveCost;
-					}
+
+				for (uint8_t i = 0; i < collector.size; i++) {
+					const auto mcode = collector.moves[i];
+					const Gigantua::Board::Move<white> mv(mcode);
+					
+					int order = SimpleSort(pos, mv);
+					
+					// TT move gets highest priority
+					if (mcode == bestMove) order = 1000000;
+					else if (mcode == antMove) order += 2000000;
+					else if (mcode == ctx.killerMove1[ctx.ply]) order += Killer1MoveCost;
+					else if (mcode == ctx.killerMove2[ctx.ply]) order += Killer2MoveCost;
+					else if (prevMove && mcode == ctx.counterMoves[prevMove]) order += CounterMoveCost;
+					
+					collector.order[i] = order;
 				}
 
 				TTable::Flag flag = TTable::Flag::Alpha;
 				uint8_t searchSize = collector.size;
+				uint8_t quietsSeen = 0;
+				int bestScore = -1000000;
 
 				for (uint8_t m = 0; m < searchSize; m++) {
 					if (!searchStarted) break;
@@ -418,76 +407,75 @@ namespace Search {
 					collector.SortMoves(m);
 
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[m]]);
+					const auto mcode = collector.moves[collector.index[m]];
 					const auto order = collector.order[collector.index[m]];
-					const auto next = move.play(pos);
+					const bool isQuiet = order < 200;
 
-					// Late Move Pruning: skip late quiet moves at low depth
-					if (futilityPruning && 
-						m > 2 + depth * depth) {
+					// Futility pruning for quiet moves
+					if (futilityPruning && quietsSeen > 2) {
 						continue;
 					}
 
-					ctx.ply++;
+					const auto next = move.play(pos);
 
-					// record repetition for next ply
+					if (isQuiet) {
+						quietsSeen++;
+					}
+
+					ctx.ply++;
 					if (ctx.ply < MaxSearchDepth) {
 						ctx.repetition[ctx.ply] = next.Hash;
 					}
 
-					const bool isQuiet = order < 200;
-					
-					const bool reduce =
-						m > 0 &&
-						depth > 0 &&
-						!inCheck &&
-						isQuiet;
+					int score = 0;
+					bool doFullSearch = true;
 
-					int score = std::numeric_limits<int>::max();
-					if (reduce) {
-						// Improved LMR with better depth/move scaling
-						int reduction = int(0.75f + std::log2(depth) * 0.5f + std::log2(m) * 0.5f);
-						
-						// Reduce reduction for PV nodes
-						if (pvNode) reduction = std::max(0, reduction - 1);
-						
-						// Don't reduce good tactical moves
-						if (order > 100) reduction = std::max(0, reduction - 1);
+					// Late Move Reduction (LMR)
+					if (m > 0 && depth > 2 && !pvNode && order < 200 && alpha > -20000) {
+						int reduction = int(0.7f + std::log2(depth) * 0.5 + std::log2(m) * 0.5f);
+						if (reduction && order > 100) reduction--;
 
-						if (IsMateScore(alpha)) reduction = 0;// std::max(0, reduction - 1);
-						
-						// Reduce more for late moves
-						if (m > 12) reduction++;
-						
-						reduction = std::min(reduction, depth - 1);
-
-						// try a null-window search with reduction
-						score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order);
-						
-						// If it fails high, re-search at full depth
-						if (score > alpha) {
-							score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -alpha - 1, -alpha, order);
+						if (reduction > 0) {
+							score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, mcode);
+							doFullSearch = (score > alpha);
 						}
-					} else if (m > 0 && pvNode) {
-						// PVS: null-window search first
-						score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -alpha - 1, -alpha, order);
 					}
 
-					// Full window search for first move or if null-window failed high
-					if (score > alpha || m == 0)
-						score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -beta, -alpha, order);
+					// PVS search
+					if (doFullSearch) {
+						if ((m == 0) || inCheck) {
+							score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -beta, -alpha, mcode, order);
+						}
+						else {
+							score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -alpha - 1, -alpha, mcode, order);
+							if (score > alpha && score < beta) {
+								score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -beta, -alpha, mcode, order);
+							}
+						}
+					}
 
 					ctx.ply--;
 
+					if (score > bestScore) {
+						bestScore = score;
+					}
+
 					if (score > alpha) {
 						flag = TTable::Flag::Value;
-						bestMove = move.move;
+						bestMove = mcode;
 						alpha = score;
-						ctx.pvTable.table[ctx.ply].Compose(move.move, ctx.pvTable.table[ctx.ply + 1]);
+						ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
 
 						if (alpha >= beta) {
 							if (isQuiet) {
+								// Update killer moves
 								ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
-								ctx.killerMove1[ctx.ply] = move.move;
+								ctx.killerMove1[ctx.ply] = mcode;
+
+								// Update counter move
+								if (prevMove) {
+									ctx.counterMoves[prevMove] = mcode;
+								}
 							}
 							flag = TTable::Flag::Beta;
 							break;
@@ -495,7 +483,6 @@ namespace Search {
 					}
 				}
 
-				// Adjust mate scores to TT (convert to root-relative)
 				tTable.Put(pos, ScoreToTT(alpha, ctx.ply), bestMove, depth, flag);
 				return alpha;
 			}
@@ -527,7 +514,6 @@ namespace Search {
 					const auto mv = Gigantua::MoveList::MoveList<white>(current);
 					if (mv.size() == 0) {
 						currentBestLine.size = 0;
-
 						return Evaluate(current);
 					}
 
@@ -535,14 +521,12 @@ namespace Search {
 						currentBestLine.size = 1;
 						bestMove = mv[0].move;
 						currentBestLine.line[0] = mv[0].move;
-
 						return Evaluate(current);
 					}
 				}
 
 				SearchCtx ctx;
 				ctx.Clear();
-				// record root hash for repetition checks
 				ctx.repetition[0] = current.Hash;
 
 				searchStarted = true;
@@ -565,14 +549,12 @@ namespace Search {
 					const auto mv = Gigantua::MoveList::MoveList<white>(current);
 					if (mv.size() == 0) {
 						currentBestLine.size = 0;
-
 						return false;
 					}
 
 					if (mv.size() == 1) {
 						currentBestLine.size = 1;
 						currentBestLine.line[0] = mv[0].move;
-
 						return false;
 					}
 				}
@@ -581,7 +563,6 @@ namespace Search {
 				searchStarted = true;
 
 				searchThreads.clear();
-				//threadsNum = 1;
 				for (uint16_t i = 0; i < threadsNum; i++) {
 					SearchThread st;
 					st.ctx.Clear();
@@ -592,22 +573,19 @@ namespace Search {
 					searchThreads[i].threadPtr.reset(new std::thread([this, current, milliseconds, i, onWin, threadsNum]() {
 						uint8_t depth = 1;
 						int64_t search_time_ms = milliseconds;
-						// aspiration window variables will be set per-depth
+						
 						while (searchStarted && depth < MaxSearchDepth) {
 							depth++;
 							Gigantua::Board pos = current;
-							// ensure per-thread ctx has root repetition set
 							searchThreads[i].ctx.repetition[0] = pos.Hash;
 							const auto startTime = std::chrono::high_resolution_clock::now();
 
-							// Aspiration window logic:
-							int window = isEndgame(pos) ? 80 : 120; // Kleineres Window im Endspiel
+							int window = isEndgame(pos) ? 50 : 80;
 							int score = 0;
 							int attempts = 0;
-							int prevScore = currentBestScore; // shared best score from previous iteration (may be 0)
-							bool useAspiration = (prevScore != 0 && !IsMateScore(prevScore));
+							int prevScore = currentBestScore;
+							bool useAspiration = false && (depth > 4 && prevScore != 0 && !IsMateScore(prevScore));
 
-							// Try aspiration and widen if necessary (limited retries)
 							do {
 								int alpha = useAspiration && attempts == 0 ? prevScore - window : -1000000;
 								int beta  = useAspiration && attempts == 0 ? prevScore + window : 1000000;
@@ -616,12 +594,12 @@ namespace Search {
 
 								// if fail-low or fail-high, widen and retry
 								if (score <= alpha) {
-									window = std::max(window * 3, 200);
+									window = std::min(window * 2, 1000);
 									attempts++;
 									useAspiration = true;
 								}
 								else if (score >= beta) {
-									window = std::max(window * 3, 200);
+									window = std::min(window * 2, 1000);
 									attempts++;
 									useAspiration = true;
 								}
@@ -634,19 +612,16 @@ namespace Search {
 							const auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(stopTime - startTime);
 
 							if (searchStarted && i == 0) {
-								{
-									if (searchThreads[i].ctx.pvTable.GetBest().size > 0) {
-										currentBestScore = score;
-										currentBestLine = searchThreads[i].ctx.pvTable.GetBest();
-										std::cout << "d" << int(depth) << "s" << score << "ms" << dur_ms.count() << "(" << Gigantua::Board::moveStr(currentBestLine.line[0]) << ")" << std::endl;
-									}
+								if (searchThreads[i].ctx.pvTable.GetBest().size > 0) {
+									currentBestScore = score;
+									currentBestLine = searchThreads[i].ctx.pvTable.GetBest();
+									std::cout << "d" << int(depth) << "s" << score << "ms" << dur_ms.count() << "(" << Gigantua::Board::moveStr(currentBestLine.line[0]) << ")" << std::endl;
 								}
 
 								if (IsMateScore(score)) {
 									if (onWin) {
 										onWin(BestMove());
 									}
-
 									searchStarted = false;
 									break;
 								}
@@ -661,7 +636,6 @@ namespace Search {
 										if (onWin) {
 											onWin(0);
 										}
-
 										searchStarted = false;
 										break;
 									}
@@ -672,10 +646,6 @@ namespace Search {
 				}
 
 				return true;
-			}
-
-			template<bool white> int qSearch(const Gigantua::Board& brd) {
-				return QuiescenceSearch<white>(brd, -1000000, 1000000, 0, 0);
 			}
 
 			void Stop() {
