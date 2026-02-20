@@ -15,7 +15,7 @@ namespace Search {
 
 		struct Edge {
 		private:
-			static constexpr float Smoothing = 0.01f;
+			static constexpr float Smoothing = 0.03f;
 			uint16_t move = 0;
 			uint32_t entries = 0;
 			float sugar = 0;

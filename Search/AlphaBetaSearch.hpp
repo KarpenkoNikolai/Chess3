@@ -348,11 +348,11 @@ namespace Search {
 
 				bool futilityPruning = false;
 
-				if (myOrder < 200 && !pvNode && !inCheck && alpha > -20000 && !rootNode) {
+				if (myOrder < 200 && !inCheck && alpha > -20000 && !rootNode) {
 					int staticEval = Evaluate(pos);
 
 					// Reverse Futility Pruning
-					int rfpMargin = 220 * depth;
+					int rfpMargin = 320 * depth;
 					if ((staticEval - rfpMargin) >= beta && hasNonPawnMaterial<white>(pos)) {
 						return (staticEval + beta) / 2;
 					}
@@ -431,9 +431,10 @@ namespace Search {
 					bool doFullSearch = true;
 
 					// Late Move Reduction (LMR)
-					if (m > 0 && depth > 2 && !pvNode && order < 200 && alpha > -20000) {
-						int reduction = int(0.7f + std::log2(depth) * 0.5 + std::log2(m) * 0.5f);
+					if (m > 0 && depth > 2 && !inCheck && order < 200 && alpha > -20000) {
+						int reduction = int(0.7f + std::log2(depth) * 0.5 + std::log2(m) * 0.3f);
 						if (reduction && order > 100) reduction--;
+						if (reduction && pvNode) reduction--;
 
 						if (reduction > 0) {
 							score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, mcode);
@@ -448,7 +449,7 @@ namespace Search {
 						}
 						else {
 							score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -alpha - 1, -alpha, mcode, order);
-							if (score > alpha && score < beta) {
+							if (score > alpha) {
 								score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -beta, -alpha, mcode, order);
 							}
 						}
