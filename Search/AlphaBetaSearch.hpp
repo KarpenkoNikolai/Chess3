@@ -31,9 +31,8 @@ namespace Search {
 		{
 		private:
 			static constexpr int MatVal = 500000;
-			static constexpr int Killer1MoveCost = 500;
-			static constexpr int Killer2MoveCost = 300;
-			static constexpr int CounterMoveCost = 400;
+			static constexpr int Killer1MoveCost = 5000;
+			static constexpr int Killer2MoveCost = 3000;
 
 			Search::TTable tTable;
 
@@ -73,10 +72,9 @@ namespace Search {
 			struct SearchCtx {
 				uint8_t ply = 0;
 				PvTable pvTable;
-				std::array<uint16_t, MaxSearchDepth> killerMove1 = { 0 };
-				std::array<uint16_t, MaxSearchDepth> killerMove2 = { 0 };
-				std::array<uint64_t, MaxSearchDepth> repetition = { 0 };
-				std::array<uint16_t, 65536> counterMoves = { 0 }; // Counter move heuristic
+				std::array<uint16_t, MaxSearchDepth> killerMove1 = {};
+				std::array<uint16_t, MaxSearchDepth> killerMove2 = {};
+				std::array<uint64_t, MaxSearchDepth> repetition = {};
 
 				void Clear() {
 					ply = 0;
@@ -84,7 +82,6 @@ namespace Search {
 					killerMove1.fill(0);
 					killerMove2.fill(0);
 					repetition.fill(0);
-					counterMoves.fill(0);
 				}
 			};
 
@@ -219,8 +216,7 @@ namespace Search {
 					stand_pat = Evaluate(pos);
 					if (stand_pat >= beta) return beta;
 					
-					constexpr int QUEEN_VALUE = 2700;
-					if (stand_pat + QUEEN_VALUE + 200 < alpha) {
+					if (stand_pat + 2900 < alpha) {
 						return alpha;
 					}
 				}
@@ -231,7 +227,7 @@ namespace Search {
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply >= 4);
+						collector.order[i] = SimpleSort(pos, mv, qply >= 2);
 					}
 				}
 				else {
@@ -254,7 +250,7 @@ namespace Search {
 
 					if (!inCheck && order < 9000) {
 						const int staticGain = order;
-						if ((stand_pat + staticGain + 600) <= alpha) {
+						if ((stand_pat + staticGain + 400) <= alpha) {
 							continue;
 						}
 					}
@@ -290,22 +286,28 @@ namespace Search {
 			}
 
 			template<bool white> int MiniMaxAB(
-				int8_t base_depth,
 				SearchCtx& ctx,
 				const Gigantua::Board& pos,
-				int8_t depth, int alpha, int beta, uint16_t prevMove = 0, int myOrder = 0)
+				int8_t depth, int alpha, int beta, int myOrder = 0, bool pvNode = true)
 			{
 				if (depth < 0) depth = 0;
-				if (ctx.ply >= MaxSearchDepth) return 0;
-				if (isDraw(pos)) return 0;
+
+				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
+
+				if (depth < 1 && !inCheck) {
+					return QuiescenceSearch<white>(ctx, pos, alpha, beta, 0);
+				}
 
 				const bool rootNode = (ctx.ply == 0);
 
 				if (!rootNode) {
+					if (ctx.ply >= MaxSearchDepth) return 0;
+					if (isDraw(pos)) return 0;
+
 					for (size_t i = 0; i < history.size(); i++)
 						if (pos.Hash == history[i]) return 0;
 
-					for (int i = int(ctx.ply) - 2; i >= 0; i-=2) {
+					for (int i = int(ctx.ply) - 2; i >= 0; i -= 2) {
 						if (pos.Hash == ctx.repetition[i])
 							return 0;
 					}
@@ -317,7 +319,6 @@ namespace Search {
 					nodePtr.Unlock();
 				}
 
-				const bool pvNode = (beta - alpha) > 1;
 				uint16_t bestMove = 0;
 
 				// TT probe with improved cutoff
@@ -328,13 +329,7 @@ namespace Search {
 					}
 				}
 
-				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
-
 				ctx.pvTable.table[ctx.ply].Clear();
-
-				if (depth < 1 && !inCheck) {
-					return QuiescenceSearch<white>(ctx, pos, alpha, beta, 0);
-				}
 
 				MoveCollector<white> collector;
 				Gigantua::MoveList::EnumerateMoves<MoveCollector<white>, white>(collector, pos);
@@ -348,12 +343,12 @@ namespace Search {
 
 				bool futilityPruning = false;
 
-				if (myOrder < 200 && !inCheck && alpha > -20000 && !rootNode) {
+				if (!pvNode && !inCheck && depth < 10 && alpha > -20000 && !rootNode) {
 					int staticEval = Evaluate(pos);
 
 					// Reverse Futility Pruning
 					int rfpMargin = 320 * depth;
-					if ((staticEval - rfpMargin) >= beta && hasNonPawnMaterial<white>(pos)) {
+					if ((staticEval - rfpMargin) >= beta) {
 						return (staticEval + beta) / 2;
 					}
 
@@ -386,19 +381,16 @@ namespace Search {
 					
 					int order = SimpleSort(pos, mv);
 					
-					// TT move gets highest priority
 					if (mcode == bestMove) order = 1000000;
 					else if (mcode == antMove) order += 2000000;
 					else if (mcode == ctx.killerMove1[ctx.ply]) order += Killer1MoveCost;
 					else if (mcode == ctx.killerMove2[ctx.ply]) order += Killer2MoveCost;
-					else if (prevMove && mcode == ctx.counterMoves[prevMove]) order += CounterMoveCost;
 					
 					collector.order[i] = order;
 				}
 
 				TTable::Flag flag = TTable::Flag::Alpha;
 				uint8_t searchSize = collector.size;
-				uint8_t quietsSeen = 0;
 				int bestScore = -1000000;
 
 				for (uint8_t m = 0; m < searchSize; m++) {
@@ -409,50 +401,41 @@ namespace Search {
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[m]]);
 					const auto mcode = collector.moves[collector.index[m]];
 					const auto order = collector.order[collector.index[m]];
-					const bool isQuiet = order < 200;
 
-					// Futility pruning for quiet moves
-					if (futilityPruning && quietsSeen > 2) {
+					if (futilityPruning && m > 5) {
 						continue;
 					}
 
 					const auto next = move.play(pos);
-
-					if (isQuiet) {
-						quietsSeen++;
-					}
 
 					ctx.ply++;
 					if (ctx.ply < MaxSearchDepth) {
 						ctx.repetition[ctx.ply] = next.Hash;
 					}
 
-					int score = 0;
-					bool doFullSearch = true;
+					int score = std::numeric_limits<int>::max();
 
 					// Late Move Reduction (LMR)
-					if (m > 0 && depth > 2 && !inCheck && order < 200 && alpha > -20000) {
-						int reduction = int(0.7f + std::log2(depth) * 0.5 + std::log2(m) * 0.3f);
-						if (reduction && order > 100) reduction--;
-						if (reduction && pvNode) reduction--;
+					if (m > 0 && depth > 2 && !inCheck && alpha > -20000) {
+						int reduction = m/6 + depth/4;
+						if (reduction && order > 50) reduction--;
 
-						if (reduction > 0) {
-							score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, mcode);
-							doFullSearch = (score > alpha);
+						score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order, false);
+
+						if (score > alpha) {
+							if (reduction > 0) {
+								score = -MiniMaxAB<!white>(ctx, next, depth - 1, -alpha - 1, -alpha, order, false);
+							}
+
+							if (score > alpha) {
+								score = std::numeric_limits<int>::max();
+								pvNode = true;
+							}
 						}
 					}
 
-					// PVS search
-					if (doFullSearch) {
-						if ((m == 0) || inCheck) {
-							score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -beta, -alpha, mcode, order);
-						}
-						else {
-							score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -alpha - 1, -alpha, mcode, order);
-							if (score > alpha) {
-								score = -MiniMaxAB<!white>(base_depth, ctx, next, depth - 1, -beta, -alpha, mcode, order);
-							}
-						}
+					if (score > alpha) {
+						score = -MiniMaxAB<!white>(ctx, next, depth - 1, -beta, -alpha, order, pvNode);
 					}
 
 					ctx.ply--;
@@ -468,15 +451,10 @@ namespace Search {
 						ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
 
 						if (alpha >= beta) {
-							if (isQuiet) {
+							if (order < 100) {
 								// Update killer moves
 								ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
 								ctx.killerMove1[ctx.ply] = mcode;
-
-								// Update counter move
-								if (prevMove) {
-									ctx.counterMoves[prevMove] = mcode;
-								}
 							}
 							flag = TTable::Flag::Beta;
 							break;
@@ -531,7 +509,7 @@ namespace Search {
 				ctx.repetition[0] = current.Hash;
 
 				searchStarted = true;
-				int score = MiniMaxAB<white>(depth, ctx, current, depth, -1000000, 1000000);
+				int score = MiniMaxAB<white>(ctx, current, depth, -1000000, 1000000);
 				searchStarted = false;
 				bestMove = ctx.pvTable.GetBest().line[0];
 				return score;
@@ -591,7 +569,7 @@ namespace Search {
 								int alpha = useAspiration && attempts == 0 ? prevScore - window : -1000000;
 								int beta  = useAspiration && attempts == 0 ? prevScore + window : 1000000;
 
-								score = MiniMaxAB<white>(depth, searchThreads[i].ctx, pos, depth, alpha, beta);
+								score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, alpha, beta);
 
 								// if fail-low or fail-high, widen and retry
 								if (score <= alpha) {

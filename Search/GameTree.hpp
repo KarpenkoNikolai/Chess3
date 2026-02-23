@@ -10,12 +10,12 @@ namespace Search {
 
 
 	struct GameTree {
-		static constexpr uint8_t BucketSize = 32;
+		static constexpr uint8_t BucketSize = 16;
 		const size_t HashTableSize;
 
 		struct Edge {
 		private:
-			static constexpr float Smoothing = 0.03f;
+			static constexpr float Smoothing = 0.02f;
 			uint16_t move = 0;
 			uint32_t entries = 0;
 			float sugar = 0;

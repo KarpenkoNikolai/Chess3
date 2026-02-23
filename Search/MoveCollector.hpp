@@ -96,30 +96,39 @@ namespace Search {
 		if (result)
 			return result;
 
-		if (Gigantua::MoveList::QueenInCheck<!white>(next)) {
+		const auto skipNext = pos.SkipMove();
+
+		if (!Gigantua::MoveList::QueenInCheck<!white>(skipNext) && Gigantua::MoveList::QueenInCheck<!white>(next)) {
 			result += 90;
 			if (move.who(pos) == Gigantua::BoardPiece::Pawn) result += 5;
 			if (move.who(pos) == Gigantua::BoardPiece::Knight) result += 3;
 			if (move.who(pos) == Gigantua::BoardPiece::Bishop) result += 2;
 			if (move.who(pos) == Gigantua::BoardPiece::Rook) result += 1;
+			return result;
 		}
-		else if (Gigantua::MoveList::RookInCheck<!white>(next)) {
+
+		if (!Gigantua::MoveList::RookInCheck<!white>(skipNext) && Gigantua::MoveList::RookInCheck<!white>(next)) {
 			result += 80;
 			if (move.who(pos) == Gigantua::BoardPiece::Pawn) result += 5;
 			if (move.who(pos) == Gigantua::BoardPiece::Knight) result += 3;
 			if (move.who(pos) == Gigantua::BoardPiece::Bishop) result += 2;
+			return result;
 		}
-		else if (Gigantua::MoveList::KnightInCheck<!white>(next)) {
+
+		if (!Gigantua::MoveList::KnightInCheck<!white>(skipNext) && Gigantua::MoveList::KnightInCheck<!white>(next)) {
 			result += 70;
 			if (move.who(pos) == Gigantua::BoardPiece::Pawn) result += 5;
 			if (move.who(pos) == Gigantua::BoardPiece::Bishop) result += 2;
 			if (move.who(pos) == Gigantua::BoardPiece::Rook) result += 1;
+			return result;
 		}
-		else if (Gigantua::MoveList::BishopInCheck<!white>(next)) {
+
+		if (!Gigantua::MoveList::BishopInCheck<!white>(skipNext) && Gigantua::MoveList::BishopInCheck<!white>(next)) {
 			result += 60;
 			if (move.who(pos) == Gigantua::BoardPiece::Pawn) result += 5;
 			if (move.who(pos) == Gigantua::BoardPiece::Knight) result += 2;
 			if (move.who(pos) == Gigantua::BoardPiece::Rook) result += 1;
+			return result;
 		}
 
 		if (!result) {
