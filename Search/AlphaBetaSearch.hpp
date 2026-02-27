@@ -227,7 +227,7 @@ namespace Search {
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply >= 2);
+						collector.order[i] = SimpleSort(pos, mv, qply >= 4);
 					}
 				}
 				else {
@@ -250,7 +250,7 @@ namespace Search {
 
 					if (!inCheck && order < 9000) {
 						const int staticGain = order;
-						if ((stand_pat + staticGain + 400) <= alpha) {
+						if ((stand_pat + staticGain + 600) <= alpha) {
 							continue;
 						}
 					}
@@ -288,8 +288,9 @@ namespace Search {
 			template<bool white> int MiniMaxAB(
 				SearchCtx& ctx,
 				const Gigantua::Board& pos,
-				int8_t depth, int alpha, int beta, int myOrder = 0, bool pvNode = true)
+				int8_t depth, int alpha, int beta, int myOrder = 0)
 			{
+				if (ctx.ply >= MaxSearchDepth) return 0;
 				if (depth < 0) depth = 0;
 
 				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
@@ -298,10 +299,13 @@ namespace Search {
 					return QuiescenceSearch<white>(ctx, pos, alpha, beta, 0);
 				}
 
+				if (alpha < -MatVal) alpha = -MatVal;
+				if (beta > MatVal - 1) beta = MatVal - 1;
+				if (alpha >= beta) return alpha;
+
 				const bool rootNode = (ctx.ply == 0);
 
 				if (!rootNode) {
-					if (ctx.ply >= MaxSearchDepth) return 0;
 					if (isDraw(pos)) return 0;
 
 					for (size_t i = 0; i < history.size(); i++)
@@ -319,6 +323,7 @@ namespace Search {
 					nodePtr.Unlock();
 				}
 
+				const bool pvNode = (beta - alpha) > 1;
 				uint16_t bestMove = 0;
 
 				// TT probe with improved cutoff
@@ -343,7 +348,7 @@ namespace Search {
 
 				bool futilityPruning = false;
 
-				if (!pvNode && !inCheck && depth < 10 && alpha > -20000 && !rootNode) {
+				if (myOrder < 100 && !pvNode && !inCheck && depth < 8 && alpha > -20000 && !rootNode) {
 					int staticEval = Evaluate(pos);
 
 					// Reverse Futility Pruning
@@ -402,7 +407,7 @@ namespace Search {
 					const auto mcode = collector.moves[collector.index[m]];
 					const auto order = collector.order[collector.index[m]];
 
-					if (futilityPruning && m > 5) {
+					if (futilityPruning && m > 4) {
 						continue;
 					}
 
@@ -416,26 +421,26 @@ namespace Search {
 					int score = std::numeric_limits<int>::max();
 
 					// Late Move Reduction (LMR)
-					if (m > 0 && depth > 2 && !inCheck && alpha > -20000) {
-						int reduction = m/6 + depth/4;
-						if (reduction && order > 50) reduction--;
+					if (m > 0 && depth > 1 && !inCheck && alpha > -20000) {
+						int reduction = int(0.8f + log2(m)*0.3f + log2(depth)*0.5f);
+						if (reduction && pvNode) reduction--;
+						if (reduction && order > 100) reduction--;
 
-						score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order, false);
+						score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order);
 
 						if (score > alpha) {
 							if (reduction > 0) {
-								score = -MiniMaxAB<!white>(ctx, next, depth - 1, -alpha - 1, -alpha, order, false);
+								score = -MiniMaxAB<!white>(ctx, next, depth - 1, -alpha - 1, -alpha, order);
 							}
 
 							if (score > alpha) {
 								score = std::numeric_limits<int>::max();
-								pvNode = true;
 							}
 						}
 					}
 
-					if (score > alpha) {
-						score = -MiniMaxAB<!white>(ctx, next, depth - 1, -beta, -alpha, order, pvNode);
+					if (score > alpha) {//full window search
+						score = -MiniMaxAB<!white>(ctx, next, depth - 1, -beta, -alpha, order);
 					}
 
 					ctx.ply--;

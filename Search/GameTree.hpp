@@ -10,7 +10,7 @@ namespace Search {
 
 
 	struct GameTree {
-		static constexpr uint8_t BucketSize = 16;
+		static constexpr uint8_t BucketSize = 32;
 		const size_t HashTableSize;
 
 		struct Edge {
