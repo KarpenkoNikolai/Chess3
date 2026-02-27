@@ -346,21 +346,17 @@ namespace Search {
 					return 0;
 				}
 
-				bool futilityPruning = false;
+				int staticEval = Evaluate(pos);
 
-				if (myOrder < 100 && !pvNode && !inCheck && depth < 8 && alpha > -20000 && !rootNode) {
-					int staticEval = Evaluate(pos);
+				if (myOrder < 100 && !pvNode && !inCheck && alpha > -20000 && !rootNode) {
+					//razoring
+					if(staticEval < alpha - 600 - 320 * depth * depth)
+						return QuiescenceSearch<white>(ctx, pos, alpha, beta, 0);
 
 					// Reverse Futility Pruning
 					int rfpMargin = 320 * depth;
-					if ((staticEval - rfpMargin) >= beta) {
-						return (staticEval + beta) / 2;
-					}
-
-					// Extended Futility Pruning
-					int futilityMargin = 220 * depth;
-					if ((staticEval + futilityMargin) < alpha) {
-						futilityPruning = true;
+					if ((staticEval - rfpMargin) >= beta && staticEval > beta) {
+						return (staticEval + 2 * beta) / 3;
 					}
 				}
 
@@ -406,12 +402,14 @@ namespace Search {
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[m]]);
 					const auto mcode = collector.moves[collector.index[m]];
 					const auto order = collector.order[collector.index[m]];
-
-					if (futilityPruning && m > 4) {
-						continue;
-					}
-
 					const auto next = move.play(pos);
+
+					if (hasNonPawnMaterial<!white>(next) && !inCheck && order < 3000) {
+						const int futility = staticEval + 250 + 220 * depth + order;
+						if (futility <= alpha) {
+							continue;
+						}
+					}
 
 					ctx.ply++;
 					if (ctx.ply < MaxSearchDepth) {
