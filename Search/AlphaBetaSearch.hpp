@@ -245,10 +245,10 @@ namespace Search {
 					collector.SortMoves(i);
 					const int order = collector.order[collector.index[i]];
 
-					if (order < 50)
+					if (order < 5)
 						break;
 
-					if (!inCheck && order < 9000) {
+					if (!inCheck && order < 3000) {
 						const int staticGain = order;
 						if ((stand_pat + staticGain + 600) <= alpha) {
 							continue;
@@ -348,15 +348,10 @@ namespace Search {
 
 				int staticEval = Evaluate(pos);
 
-				if (myOrder < 100 && !pvNode && !inCheck && alpha > -20000 && !rootNode) {
-					//razoring
-					if(staticEval < alpha - 600 - 320 * depth * depth)
-						return QuiescenceSearch<white>(ctx, pos, alpha, beta, 0);
-
-					// Reverse Futility Pruning
+				if (myOrder < 100 && depth < 8 && !pvNode && !inCheck && !rootNode) {
 					int rfpMargin = 320 * depth;
-					if ((staticEval - rfpMargin) >= beta && staticEval > beta) {
-						return (staticEval + 2 * beta) / 3;
+					if ((staticEval - rfpMargin) >= beta) {
+						return (staticEval + beta) / 2;
 					}
 				}
 
@@ -404,8 +399,8 @@ namespace Search {
 					const auto order = collector.order[collector.index[m]];
 					const auto next = move.play(pos);
 
-					if (hasNonPawnMaterial<!white>(next) && !inCheck && order < 3000) {
-						const int futility = staticEval + 250 + 220 * depth + order;
+					if (!inCheck && order < 100) {
+						const int futility = staticEval + 120 * depth + order;
 						if (futility <= alpha) {
 							continue;
 						}
@@ -419,10 +414,11 @@ namespace Search {
 					int score = std::numeric_limits<int>::max();
 
 					// Late Move Reduction (LMR)
-					if (m > 0 && depth > 1 && !inCheck && alpha > -20000) {
-						int reduction = int(0.8f + log2(m)*0.3f + log2(depth)*0.5f);
+					if (m > 0 && depth > 1 && !inCheck) {
+						int reduction = int(0.7f + log2(m)*0.5f + log2(depth)*0.5f);
 						if (reduction && pvNode) reduction--;
 						if (reduction && order > 100) reduction--;
+						if (reduction && order > 300) reduction--;
 
 						score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order);
 
@@ -562,33 +558,10 @@ namespace Search {
 							searchThreads[i].ctx.repetition[0] = pos.Hash;
 							const auto startTime = std::chrono::high_resolution_clock::now();
 
-							int window = isEndgame(pos) ? 50 : 80;
-							int score = 0;
-							int attempts = 0;
-							int prevScore = currentBestScore;
-							bool useAspiration = false && (depth > 4 && prevScore != 0 && !IsMateScore(prevScore));
+							int alpha = -1000000;
+							int beta  = 1000000;
 
-							do {
-								int alpha = useAspiration && attempts == 0 ? prevScore - window : -1000000;
-								int beta  = useAspiration && attempts == 0 ? prevScore + window : 1000000;
-
-								score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, alpha, beta);
-
-								// if fail-low or fail-high, widen and retry
-								if (score <= alpha) {
-									window = std::min(window * 2, 1000);
-									attempts++;
-									useAspiration = true;
-								}
-								else if (score >= beta) {
-									window = std::min(window * 2, 1000);
-									attempts++;
-									useAspiration = true;
-								}
-								else {
-									break;
-								}
-							} while (attempts < 4 && searchStarted);
+							int score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, alpha, beta);
 
 							const auto stopTime = std::chrono::high_resolution_clock::now();
 							const auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(stopTime - startTime);

@@ -49,7 +49,7 @@ namespace Search {
 			template <bool white>
 			float getProbability() const
 			{
-				if (entries == 0) return 40000.0f;
+				if (entries == 0) return 40.0f;
 
 				const auto s = (sugar + Smoothing);
 				const auto t = (toxin + Smoothing);
