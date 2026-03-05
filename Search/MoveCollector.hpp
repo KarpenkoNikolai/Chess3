@@ -131,10 +131,6 @@ namespace Search {
 			return result;
 		}
 
-		if (!result) {
-			result += 200 / (Gigantua::MoveList::MovesCount<!white>(next) + 1);
-		}
-
 		if (move.type() == Gigantua::MoveType::PawnMove) result += 5;
 
 		return result;
