@@ -276,7 +276,7 @@ namespace Search {
 						}
 						alpha = score;
 
-						if(alpha > MatVal - 100) {
+						if(alpha > MatVal - MaxSearchDepth) {
 							return alpha;
 						}
 					}
@@ -359,11 +359,11 @@ namespace Search {
 					int staticEval = Evaluate(pos);
 
 					int rfpMargin = 100 + 220 * depth;
-					if (beta > -2000 && (staticEval - rfpMargin) >= beta) {
+					if (beta > 0 && staticEval < 1000 && (staticEval - rfpMargin) >= beta) {
 						return (staticEval + beta) / 2;
 					}
 
-					if ((staticEval + 100 + 120 * depth) <= alpha) {
+					if (alpha < MatVal - 100 && (staticEval + 100 + 120 * depth) <= alpha) {
 						futility = true;
 					}
 				}
@@ -406,7 +406,7 @@ namespace Search {
 				for (uint8_t m = 0; m < searchSize; m++) {
 					if (!searchStarted) break;
 
-					if (futility && m > 5)
+					if (futility && m > 3)
 						break;
 
 					collector.SortMoves(m);
@@ -425,8 +425,9 @@ namespace Search {
 
 					int reduction = 0;
 					// Late Move Reduction (LMR) - disabled in mate search, check, and for high-value moves
-					if (m > 0 && !pvNode && !inCheck && order < 100 && depth >= 3) {
+					if (m > 0 && !inCheck && order < 100 && depth >= 3) {
 						reduction = int(0.7f + log2(m) * 0.5f + log2(depth) * 0.5f);
+						//if (reduction && pvNode) reduction--;
 					}
 
 					score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order);
