@@ -277,7 +277,7 @@ namespace Search {
 					if (score > alpha) {
 						alpha = score;
 						if (alpha >= beta)
-							break;
+							return beta;
 					}
 				}
 
@@ -297,6 +297,11 @@ namespace Search {
 					return 0;
 
 				if (depth < 0) depth = 0;
+
+				// mate distance pruning
+				if (alpha < -MatVal) alpha = -MatVal;
+				if (beta > MatVal - 1) beta = MatVal - 1;
+				if (alpha >= beta) return alpha;
 
 				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
 
@@ -393,12 +398,11 @@ namespace Search {
 
 				TTable::Flag flag = TTable::Flag::Alpha;
 				uint8_t searchSize = collector.size;
-				int bestScore = -1000000;
 
 				for (uint8_t m = 0; m < searchSize; m++) {
 					if (!searchStarted) break;
 
-					if (futility && m > 3)
+					if (futility && m > 5)
 						break;
 
 					collector.SortMoves(m);
@@ -415,34 +419,30 @@ namespace Search {
 
 					int score = std::numeric_limits<int>::max();
 
+					int reduction = 0;
 					// Late Move Reduction (LMR) - disabled in mate search
-					if (m > 0 && !inCheck && depth > 1 && order < 200) {
-						int reduction = int(0.7f + log2(m)*0.5f + log2(depth)*0.5f);
-						if (reduction && pvNode) reduction--;
-						if (reduction && order > 100) reduction--;
-
-						score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order);
-
-						if (score > alpha) {
-							if (reduction > 0) {
-								score = -MiniMaxAB<!white>(ctx, next, depth - 1, -alpha - 1, -alpha, order);
-							}
-
-							if (score > alpha) {
-								score = std::numeric_limits<int>::max();
-							}
-						}
+					if (m > 0 && !pvNode && !inCheck && order < 100) {
+						reduction = int(0.7f + log2(m) * 0.5f + log2(depth) * 0.5f);
 					}
 
-					if (score > alpha) {//full window search
+					score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order);
+
+					if(score > alpha && reduction > 0) {
+						// Re-search with full depth if LMR move is better than alpha
+						score = -MiniMaxAB<!white>(ctx, next, depth - 1, -alpha - 1, -alpha, order);
+						if (score > alpha) {
+							score = std::numeric_limits<int>::max();
+						}
+					}
+					else if (score > alpha && score < beta) {
+						score = std::numeric_limits<int>::max();
+					}
+
+					if (score == std::numeric_limits<int>::max()) {//full window search
 						score = -MiniMaxAB<!white>(ctx, next, depth - 1, -beta, -alpha, order);
 					}
 
 					ctx.ply--;
-
-					if (score > bestScore) {
-						bestScore = score;
-					}
 
 					if (score > alpha) {
 						flag = TTable::Flag::Value;
@@ -451,11 +451,14 @@ namespace Search {
 						ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
 
 						if (alpha >= beta) {
-							// Update killer moves
-							ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
-							ctx.killerMove1[ctx.ply] = mcode;
-							flag = TTable::Flag::Beta;
-							break;
+							if (order < 100) {
+								// Update killer moves
+								ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
+								ctx.killerMove1[ctx.ply] = mcode;
+							}
+
+							tTable.Put(pos, ScoreToTT(beta, ctx.ply), bestMove, depth, TTable::Flag::Beta);
+							return beta;
 						}
 					}
 				}

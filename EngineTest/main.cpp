@@ -101,7 +101,7 @@ int main() {
 	//Gigantua::Board p("8/8/8/6K1/5Q1P/2k5/8/8 w - - 2 2");
 	//Gigantua::Board p("8/8/8/6K1/4Q2P/8/1k6/8 w - - 4 3");
 	//Gigantua::Board p("8/8/8/8/4QK1P/2k5/8/8 w - - 6 4");
-	//Gigantua::Board p("8/8/8/8/4Q2P/4K3/1k6/8 w - - 8 5");
+	//Gigantua::Board p("6k1/8/6P1/6K1/7P/8/8/8 w - - 3 67");
 
 	Gigantua::Board p("rnbqr1k1/pp4b1/1n1p2p1/2pN2p1/5P2/1Q6/PP2B1PP/R1B2RK1 w - - 0 16");// d5f6
 	//Gigantua::Board p("r7/p3p1k1/1p1p1bBp/8/5P1P/1Rn4K/P1P3P1/4R3 w - - 4 29"); //g6d3
@@ -123,7 +123,7 @@ int main() {
 	};
 
 	Search::Ant::Engine engine(nsCostFunc, 2000000);
-	uint32_t timeMs = 300 * 1000;
+	uint32_t timeMs = 600 * 1000;
 
 	uint16_t winMove = 0;
 	std::function<void(uint16_t)> onDone = [&winMove](uint16_t move) {
@@ -131,8 +131,12 @@ int main() {
 	};
 
 	engine.Set(p);
+
+#ifndef NDEBUG
+	engine.Start(1, 1, timeMs, onDone);
+#else
 	engine.Start(4, 4, timeMs, onDone);
-	//engine.Start(1, 1, timeMs, onDone);
+#endif
 
 	for (int t = 0; t < timeMs/1000; t++) {
 		if (winMove) {
@@ -140,7 +144,7 @@ int main() {
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 		//std::cout << t + 1 << std::endl;
-		std::cout << engine.Statistic(6) << std::endl;
+		//std::cout << engine.Statistic(6) << std::endl;
 	}
 
 	engine.Stop();

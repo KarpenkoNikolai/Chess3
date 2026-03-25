@@ -426,7 +426,6 @@ namespace Ant {
 
 		uint16_t BestMove() const {
 			uint16_t result = m_abEngine.BestMove();
-			const int score = m_abEngine.BestScore();
 			if (result != 0) return result;
 
 			Search::GameTree::ConstNodePtr currentNodePtr = m_searchTree.Get(m_current);
