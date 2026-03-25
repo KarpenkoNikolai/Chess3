@@ -212,8 +212,6 @@ namespace Search {
 				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
 
 				if (!inCheck) {
-					if (alpha > MatVal - 100) return alpha;
-
 					stand_pat = Evaluate(pos);
 					if (stand_pat >= beta) return beta;
 					
@@ -250,8 +248,6 @@ namespace Search {
 						break;
 
 					if (!inCheck && order < 3000) {
-						if (alpha > MatVal - 100) break;
-
 						const int staticGain = order;
 						if ((stand_pat + staticGain + 600) <= alpha) {
 							break;
@@ -275,9 +271,14 @@ namespace Search {
 					ctx.ply--;
 
 					if (score > alpha) {
-						alpha = score;
-						if (alpha >= beta)
+						if(score >= beta) {
 							return beta;
+						}
+						alpha = score;
+
+						if(alpha > MatVal - 100) {
+							return alpha;
+						}
 					}
 				}
 
@@ -347,7 +348,8 @@ namespace Search {
 
 				if (collector.size == 0) {
 					if (inCheck) {
-						return -MatVal + ctx.ply;
+						//std::cout << pos.Diagram() << std::endl;
+						return -MatVal +ctx.ply;
 					}
 					return 0;
 				}
@@ -357,7 +359,7 @@ namespace Search {
 					int staticEval = Evaluate(pos);
 
 					int rfpMargin = 100 + 220 * depth;
-					if ((staticEval - rfpMargin) >= beta) {
+					if (beta > -2000 && (staticEval - rfpMargin) >= beta) {
 						return (staticEval + beta) / 2;
 					}
 
@@ -399,6 +401,8 @@ namespace Search {
 				TTable::Flag flag = TTable::Flag::Alpha;
 				uint8_t searchSize = collector.size;
 
+				const int oldAlpha = alpha;
+
 				for (uint8_t m = 0; m < searchSize; m++) {
 					if (!searchStarted) break;
 
@@ -420,8 +424,8 @@ namespace Search {
 					int score = std::numeric_limits<int>::max();
 
 					int reduction = 0;
-					// Late Move Reduction (LMR) - disabled in mate search
-					if (m > 0 && !pvNode && !inCheck && order < 100) {
+					// Late Move Reduction (LMR) - disabled in mate search, check, and for high-value moves
+					if (m > 0 && !pvNode && !inCheck && order < 100 && depth >= 3) {
 						reduction = int(0.7f + log2(m) * 0.5f + log2(depth) * 0.5f);
 					}
 
@@ -445,25 +449,33 @@ namespace Search {
 					ctx.ply--;
 
 					if (score > alpha) {
-						flag = TTable::Flag::Value;
-						bestMove = mcode;
-						alpha = score;
-						ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
-
-						if (alpha >= beta) {
+						if (score >= beta) {
 							if (order < 100) {
 								// Update killer moves
 								ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
 								ctx.killerMove1[ctx.ply] = mcode;
 							}
 
-							tTable.Put(pos, ScoreToTT(beta, ctx.ply), bestMove, depth, TTable::Flag::Beta);
+							tTable.Put(pos, ScoreToTT(beta, ctx.ply), mcode, depth, TTable::Flag::Beta);
 							return beta;
 						}
+
+						flag = TTable::Flag::Value;
+						bestMove = mcode;
+						alpha = score;
+						ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
+					}
+
+					// Early exit if mate found
+					if(alpha > MatVal - 100) {
+						break;
 					}
 				}
 
-				tTable.Put(pos, ScoreToTT(alpha, ctx.ply), bestMove, depth, flag);
+				if (alpha != oldAlpha) {
+					tTable.Put(pos, ScoreToTT(alpha, ctx.ply), bestMove, depth, flag);
+				}
+
 				return alpha;
 			}
 
