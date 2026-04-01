@@ -32,7 +32,7 @@ namespace Search {
 		private:
 			static constexpr int MatVal = 500000;
 			static constexpr int Killer1MoveCost = 5000;
-			static constexpr int Killer2MoveCost = 3000;
+			static constexpr int Killer2MoveCost = 4000;
 
 			Search::TTable tTable;
 
@@ -399,7 +399,6 @@ namespace Search {
 				uint8_t searchSize = collector.size;
 
 				const int oldAlpha = alpha;
-				int kaka = 0;
 				for (uint8_t m = 0; m < searchSize; m++) {
 					if (!searchStarted) break;
 
@@ -413,12 +412,11 @@ namespace Search {
 						break;
 					}
 
-					if (m > 4 && !inCheck && order < 3000) {
-						if ((staticEval + 2*order + 400) <= alpha) {
+					if (!pvNode && !inCheck && order < 3000) {
+						if ((staticEval + order + 400) < alpha) {
 							break;
 						}
 					}
-
 
 					const auto next = move.play(pos);
 
@@ -431,8 +429,7 @@ namespace Search {
 					int reduction = 0;
 					// Late Move Reduction (LMR) - disabled in mate search, check, and for high-value moves
 					if (beta < MatVal - MaxSearchDepth && m > 1 && !inCheck && order < 5) {
-						reduction = int(0.5f + log2(m) * 0.5f + log2(depth) * 0.5f);
-						if (reduction && pvNode) reduction--;
+						reduction = int(log2(m) * 0.5f + log2(depth) * 0.5f);
 					}
 
 					if(m > 0 && !inCheck && order < 100)
@@ -456,13 +453,10 @@ namespace Search {
 					ctx.ply--;
 
 					if (score > alpha) {
-						kaka = 0;
 						if (score >= beta) {
-							if (order < 100) {
-								// Update killer moves
-								ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
-								ctx.killerMove1[ctx.ply] = mcode;
-							}
+							// Update killer moves
+							ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
+							ctx.killerMove1[ctx.ply] = mcode;
 
 							tTable.Put(pos, ScoreToTT(beta, ctx.ply), mcode, depth, TTable::Flag::Beta);
 							return beta;
@@ -472,12 +466,6 @@ namespace Search {
 						bestMove = mcode;
 						alpha = score;
 						ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
-					}
-					else if(staticEval + 400 < alpha && order == 0) {
-						kaka++;
-						if(kaka > 4) {
-							break;
-						}
 					}
 
 					if(alpha > MatVal - MaxSearchDepth) {
