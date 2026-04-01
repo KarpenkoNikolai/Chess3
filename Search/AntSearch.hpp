@@ -107,12 +107,12 @@ namespace Ant {
 
 		std::function<float(const Gigantua::Board&)> m_costFunc;
 
-		static constexpr float MatVal = 10000.0f;
+		static constexpr float MatVal = 50000.0f;
 
 		Gigantua::Board m_current;
 		AlphaBeta::SearchEngine m_abEngine;
 		std::array<uint64_t, 16> history;
-		static constexpr size_t MaxAnt = 128;
+		static constexpr size_t MaxAnt = 64;
 		static constexpr size_t ABAnt = 128;
 
 		enum class AntStepResult
@@ -286,9 +286,9 @@ namespace Ant {
 			float cost = 0;
 			if(stepResult == AntStepResult::isMate) {
 				if(white == position.status.WhiteMove())
-					cost = std::min(-1000.0f, -MatVal + 100 * ply);
+					cost = std::min(-10000.0f, -MatVal + 500 * ply);
 				else
-					cost = std::max(1000.0f, MatVal - 100 * ply);
+					cost = std::max(10000.0f, MatVal - 500 * ply);
 			}
 			else {
 

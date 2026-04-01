@@ -121,20 +121,20 @@ namespace Search {
 
 			int ScoreFromTT(int score, int ply) const {
 				if (score >= (MatVal - MaxSearchDepth)) {
-					return score - ply;
+					return score + ply;
 				}
 				if (score <= -(MatVal - MaxSearchDepth)) {
-					return score + ply;
+					return score - ply;
 				}
 				return score;
 			}
 
 			int ScoreToTT(int score, int ply) const {
 				if (score >= (MatVal - MaxSearchDepth)) {
-					return score + ply;
+					return score - ply;
 				}
 				if (score <= -(MatVal - MaxSearchDepth)) {
-					return score - ply;
+					return score + ply;
 				}
 				return score;
 			}
@@ -200,7 +200,7 @@ namespace Search {
 				if (ctx.ply >= MaxSearchDepth) return 0;
 				if (isDraw(pos)) return 0;
 
-				for (int i = int(ctx.ply) - 2; i >= 0; i-=2) {
+				for (int i = int(ctx.ply) - 2; i >= 0; i -= 2) {
 					if (pos.Hash == ctx.repetition[i])
 						return 0;
 				}
@@ -214,7 +214,7 @@ namespace Search {
 				if (!inCheck) {
 					stand_pat = Evaluate(pos);
 					if (stand_pat >= beta) return beta;
-					
+
 					if (stand_pat + 2900 < alpha) {
 						return alpha;
 					}
@@ -271,12 +271,12 @@ namespace Search {
 					ctx.ply--;
 
 					if (score > alpha) {
-						if(score >= beta) {
+						if (score >= beta) {
 							return beta;
 						}
 						alpha = score;
 
-						if(alpha > MatVal - MaxSearchDepth) {
+						if (alpha > MatVal - MaxSearchDepth) {
 							return alpha;
 						}
 					}
@@ -348,23 +348,20 @@ namespace Search {
 
 				if (collector.size == 0) {
 					if (inCheck) {
-						//std::cout << pos.Diagram() << std::endl;
-						return -MatVal +ctx.ply;
+						return -MatVal + ctx.ply;
 					}
 					return 0;
 				}
 
-				bool futility = false;
-				if (myOrder < 200 && !pvNode && !inCheck && !rootNode) {
-					int staticEval = Evaluate(pos);
+				const int staticEval = Evaluate(pos);
 
-					int rfpMargin = 100 + 220 * depth;
-					if (beta > 0 && staticEval < 1000 && (staticEval - rfpMargin) >= beta) {
-						return (staticEval + beta) / 2;
-					}
-
-					if (alpha < MatVal - MaxSearchDepth && (staticEval + 100 + 120 * depth) <= alpha) {
-						futility = true;
+				bool futilityPrune = false;
+				if (depth < 6 && !pvNode && !inCheck && !rootNode) {
+					if (myOrder < 50 && 
+						alpha < MatVal - MaxSearchDepth && 
+						(staticEval + 220 * depth) <= alpha
+					) {
+						futilityPrune = true;
 					}
 				}
 
@@ -402,18 +399,27 @@ namespace Search {
 				uint8_t searchSize = collector.size;
 
 				const int oldAlpha = alpha;
-
+				int kaka = 0;
 				for (uint8_t m = 0; m < searchSize; m++) {
 					if (!searchStarted) break;
-
-					if (futility && m > 5)
-						break;
 
 					collector.SortMoves(m);
 
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[m]]);
 					const auto mcode = collector.moves[collector.index[m]];
 					const auto order = collector.order[collector.index[m]];
+
+					if (futilityPrune && m > 3 && order < 50) {
+						break;
+					}
+
+					if (m > 4 && !inCheck && order < 3000) {
+						if ((staticEval + 2*order + 400) <= alpha) {
+							break;
+						}
+					}
+
+
 					const auto next = move.play(pos);
 
 					ctx.ply++;
@@ -422,14 +428,15 @@ namespace Search {
 					}
 
 					int score = std::numeric_limits<int>::max();
-
 					int reduction = 0;
 					// Late Move Reduction (LMR) - disabled in mate search, check, and for high-value moves
-					if (m > 0 && !inCheck && order < 100 && depth >= 3) {
-						reduction = int(log2(m) * 0.5f + log2(depth) * 0.5f);
+					if (beta < MatVal - MaxSearchDepth && m > 1 && !inCheck && order < 5) {
+						reduction = int(0.5f + log2(m) * 0.5f + log2(depth) * 0.5f);
+						if (reduction && pvNode) reduction--;
 					}
 
-					score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order);
+					if(m > 0 && !inCheck && order < 100)
+						score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order);
 
 					if(score > alpha && reduction > 0) {
 						// Re-search with full depth if LMR move is better than alpha
@@ -438,7 +445,7 @@ namespace Search {
 							score = std::numeric_limits<int>::max();
 						}
 					}
-					else if (score > alpha && score < beta) {
+					else if (score > alpha) {
 						score = std::numeric_limits<int>::max();
 					}
 
@@ -449,6 +456,7 @@ namespace Search {
 					ctx.ply--;
 
 					if (score > alpha) {
+						kaka = 0;
 						if (score >= beta) {
 							if (order < 100) {
 								// Update killer moves
@@ -465,9 +473,14 @@ namespace Search {
 						alpha = score;
 						ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
 					}
+					else if(staticEval + 400 < alpha && order == 0) {
+						kaka++;
+						if(kaka > 4) {
+							break;
+						}
+					}
 
-					// Early exit if mate found
-					if(alpha > MatVal - 100) {
+					if(alpha > MatVal - MaxSearchDepth) {
 						break;
 					}
 				}
