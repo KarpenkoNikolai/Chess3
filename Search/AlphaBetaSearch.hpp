@@ -101,6 +101,7 @@ namespace Search {
 			std::atomic<bool> searchStarted = false;
 			PvLine currentBestLine;
 			int currentBestScore = 0;
+			uint16_t currentBestMove = 0;
 			std::function<float(const Gigantua::Board&)> m_costFunc;
 			std::vector<SearchThread> searchThreads;
 			const GameTree* antTreePtr = nullptr;
@@ -116,7 +117,7 @@ namespace Search {
 			}
 
 			bool IsMateScore(int score) const {
-				return std::abs(score) > (MatVal - MaxSearchDepth);
+				return std::abs(score) > (MatVal - MaxSearchDepth*2);
 			}
 
 			int ScoreFromTT(int score, int ply) const {
@@ -176,25 +177,6 @@ namespace Search {
 				return totalPieces <= 10;
 			}
 
-			static int getEndgamePhase(const Gigantua::Board& brd) {
-				const int queens = Bitcount(brd.WQueen | brd.BQueen);
-				const int rooks = Bitcount(brd.WRook | brd.BRook);
-				const int minors = Bitcount(brd.WKnight | brd.BKnight | brd.WBishop | brd.BBishop);
-
-				int phase = 256 - queens * 40 - rooks * 20 - minors * 10;
-				return std::clamp(phase, 0, 256);
-			}
-
-			template<bool white>
-			static bool hasNonPawnMaterial(const Gigantua::Board& brd) {
-				if constexpr (white) {
-					return (brd.WKnight | brd.WBishop | brd.WRook | brd.WQueen) != 0ull;
-				}
-				else {
-					return (brd.BKnight | brd.BBishop | brd.BRook | brd.BQueen) != 0ull;
-				}
-			}
-
 			template<bool white>
 			int QuiescenceSearch(SearchCtx& ctx, const Gigantua::Board& pos, int alpha, int beta, int qply) {
 				if (ctx.ply >= MaxSearchDepth) return 0;
@@ -232,7 +214,7 @@ namespace Search {
 				else {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = 10000 + SimpleSort(pos, mv, true);
+						collector.order[i] = 10000 + SimpleSort(pos, mv, false);
 					}
 				}
 
@@ -246,13 +228,6 @@ namespace Search {
 
 					if (order < 5)
 						break;
-
-					if (!inCheck && order < 3000) {
-						const int staticGain = order;
-						if ((stand_pat + staticGain + 600) <= alpha) {
-							break;
-						}
-					}
 
 					if (!inCheck && (order > 9000 || order < 100)) {
 						qply++;
@@ -271,10 +246,11 @@ namespace Search {
 					ctx.ply--;
 
 					if (score > alpha) {
+						alpha = score;
+
 						if (score >= beta) {
 							return beta;
 						}
-						alpha = score;
 
 						if (alpha > MatVal - MaxSearchDepth) {
 							return alpha;
@@ -292,7 +268,7 @@ namespace Search {
 			template<bool white> int MiniMaxAB(
 				SearchCtx& ctx,
 				const Gigantua::Board& pos,
-				int8_t depth, int alpha, int beta, int myOrder = 100000)
+				int8_t depth, int alpha, int beta, int currOrder = 1000000)
 			{
 				if (ctx.ply >= MaxSearchDepth)
 					return 0;
@@ -336,7 +312,7 @@ namespace Search {
 				// TT probe with improved cutoff
 				if (!rootNode) {
 					int cost = tTable.Get(pos, alpha, beta, depth, bestMove);
-					if (!pvNode && cost != TTable::NAN_VAL) {
+					if (cost != TTable::NAN_VAL) {
 						return ScoreFromTT(cost, ctx.ply);
 					}
 				}
@@ -353,16 +329,16 @@ namespace Search {
 					return 0;
 				}
 
-				const int staticEval = Evaluate(pos);
-
 				bool futilityPrune = false;
-				if (depth < 6 && !pvNode && !inCheck && !rootNode) {
-					if (myOrder < 50 && 
-						alpha < MatVal - MaxSearchDepth && 
-						(staticEval + 220 * depth) <= alpha
-					) {
-						futilityPrune = true;
+				if (currOrder < 3000 && !pvNode && !inCheck && !rootNode) {
+					const int staticEval = Evaluate(pos);
+					if (beta > -1000 && (staticEval - 320 * depth) > beta) {
+						return (staticEval + beta) / 2;
 					}
+
+					if (alpha > -1000 && (staticEval + 220 * depth) <= alpha) {
+						futilityPrune = true;
+					}				
 				}
 
 				// Move ordering with improved heuristics
@@ -395,8 +371,8 @@ namespace Search {
 					collector.order[i] = order;
 				}
 
-				TTable::Flag flag = TTable::Flag::Alpha;
 				uint8_t searchSize = collector.size;
+				TTable::Flag flag = TTable::Flag::Alpha;
 
 				const int oldAlpha = alpha;
 				for (uint8_t m = 0; m < searchSize; m++) {
@@ -408,14 +384,8 @@ namespace Search {
 					const auto mcode = collector.moves[collector.index[m]];
 					const auto order = collector.order[collector.index[m]];
 
-					if (futilityPrune && m > 3 && order < 50) {
+					if (futilityPrune && m > 1) {
 						break;
-					}
-
-					if (!pvNode && !inCheck && order < 3000) {
-						if ((staticEval + order + 400) < alpha) {
-							break;
-						}
 					}
 
 					const auto next = move.play(pos);
@@ -425,34 +395,32 @@ namespace Search {
 						ctx.repetition[ctx.ply] = next.Hash;
 					}
 
+					const bool reduce = m > 0 && !inCheck && order < 100;
+
 					int score = std::numeric_limits<int>::max();
-					int reduction = 0;
-					// Late Move Reduction (LMR) - disabled in mate search, check, and for high-value moves
-					if (beta < MatVal - MaxSearchDepth && m > 1 && !inCheck && order < 5) {
-						reduction = int(log2(m) * 0.5f + log2(depth) * 0.5f);
+					if (reduce) {
+						// more conservative LMR formula
+						int reduction = int(log2f(depth) * 0.5f + log2f(m) * 0.3f + 1.0f);
+						if (reduction && pvNode) reduction--;
+						if (reduction && order > 0) reduction--;
+
+						// try a null-window search with reduction
+						while ((score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order)) > alpha
+							&& reduction > 0
+							) reduction = 0;
 					}
 
-					if(m > 0 && !inCheck && order < 100)
-						score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order);
-
-					if(score > alpha && reduction > 0) {
-						// Re-search with full depth if LMR move is better than alpha
-						score = -MiniMaxAB<!white>(ctx, next, depth - 1, -alpha - 1, -alpha, order);
-						if (score > alpha) {
-							score = std::numeric_limits<int>::max();
-						}
-					}
-					else if (score > alpha) {
-						score = std::numeric_limits<int>::max();
-					}
-
-					if (score == std::numeric_limits<int>::max()) {//full window search
+					if (score > alpha)
 						score = -MiniMaxAB<!white>(ctx, next, depth - 1, -beta, -alpha, order);
-					}
 
 					ctx.ply--;
 
 					if (score > alpha) {
+						flag = TTable::Flag::Value;
+						bestMove = mcode;
+						alpha = score;
+						ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
+					
 						if (score >= beta) {
 							// Update killer moves
 							ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
@@ -461,11 +429,6 @@ namespace Search {
 							tTable.Put(pos, ScoreToTT(beta, ctx.ply), mcode, depth, TTable::Flag::Beta);
 							return beta;
 						}
-
-						flag = TTable::Flag::Value;
-						bestMove = mcode;
-						alpha = score;
-						ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
 					}
 
 					if(alpha > MatVal - MaxSearchDepth) {
@@ -548,6 +511,7 @@ namespace Search {
 					if (mv.size() == 1) {
 						currentBestLine.size = 1;
 						currentBestLine.line[0] = mv[0].move;
+						currentBestMove = mv[0].move;
 						return false;
 					}
 				}
@@ -564,7 +528,7 @@ namespace Search {
 
 				for (size_t i = 0; i < threadsNum; i++) {
 					searchThreads[i].threadPtr.reset(new std::thread([this, current, milliseconds, i, onWin, threadsNum]() {
-						uint8_t depth = 1;
+						uint8_t depth = 0;
 						int64_t search_time_ms = milliseconds;
 						
 						while (searchStarted && depth < MaxSearchDepth) {
@@ -585,7 +549,8 @@ namespace Search {
 								if (searchThreads[i].ctx.pvTable.GetBest().size > 0) {
 									currentBestScore = score;
 									currentBestLine = searchThreads[i].ctx.pvTable.GetBest();
-									std::cout << "d" << int(depth) << "s" << score << "ms" << dur_ms.count() << "(" << Gigantua::Board::moveStr(currentBestLine.line[0]) << ")" << std::endl;
+									currentBestMove = currentBestLine.line[0];
+									std::cout << "d" << int(depth) << "s" << score << "ms" << dur_ms.count() << "(" << Gigantua::Board::moveStr(currentBestMove) << ")" << std::endl;
 								}
 
 								if (IsMateScore(score)) {
@@ -627,7 +592,7 @@ namespace Search {
 
 			uint16_t GetBestMoveTT(const Gigantua::Board& brd) const { return tTable.GetBestMove(brd); }
 			PvLine GetBestLine() const { return currentBestLine; }
-			uint16_t BestMove() const { return currentBestLine.size > 0 ? currentBestLine.line[0] : 0; }
+			uint16_t BestMove() const { return currentBestMove; }
 			int BestScore() const { return currentBestScore; }
 		};
 
