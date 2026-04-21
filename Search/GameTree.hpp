@@ -15,7 +15,7 @@ namespace Search {
 
 		struct Edge {
 		private:
-			static constexpr float Smoothing = 0.05f;
+			static constexpr float Smoothing = 0.01f;
 			uint16_t move = 0;
 			uint32_t entries = 0;
 			float sugar = 0;
@@ -37,8 +37,8 @@ namespace Search {
 
 			template<bool white>
 			void AddSugar(float s) {
-				if constexpr (white) sugar += s * 0.002f;
-				else toxin += s * 0.002f;
+				if constexpr (white) sugar += s * 0.001f;
+				else toxin += s * 0.001f;
 			}
 
 			void AddEntries(float cost) {
