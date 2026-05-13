@@ -37,9 +37,8 @@ namespace Search {
 				}
 			}
 
-			uint8_t temp = index[hieght];
-			index[hieght] = index[pos];
-			index[pos] = temp;
+			if (pos != hieght)
+				std::swap(index[pos], index[hieght]);
 		}
 
 		void SortMoves() {
@@ -57,9 +56,7 @@ namespace Search {
 				do { j--; } while (order[index[j]] < pivot);
 				if (i >= j) return j;
 
-				const uint8_t tmp = index[i];
-				index[i] = index[j];
-				index[j] = tmp;
+				std::swap(index[i], index[j]);
 			}
 		}
 

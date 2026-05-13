@@ -20,7 +20,7 @@
 namespace Search {
 	namespace AlphaBeta {
 
-		static constexpr uint8_t MaxSearchDepth = 32;
+		static constexpr uint8_t MaxSearchDepth = 64;
 
 		struct Line {
 			uint8_t size = 0;
@@ -31,8 +31,8 @@ namespace Search {
 		{
 		private:
 			static constexpr int MatVal = 500000;
-			static constexpr int Killer1MoveCost = 5000;
-			static constexpr int Killer2MoveCost = 4000;
+			static constexpr int Killer1MoveCost = 40;
+			static constexpr int Killer2MoveCost = 30;
 
 			Search::TTable tTable;
 
@@ -75,6 +75,14 @@ namespace Search {
 				std::array<uint16_t, MaxSearchDepth> killerMove1 = {};
 				std::array<uint16_t, MaxSearchDepth> killerMove2 = {};
 				std::array<uint64_t, MaxSearchDepth> repetition = {};
+				std::vector<MoveCollector<true>> moveCollectorsWhite = std::vector<MoveCollector<true>>(MaxSearchDepth);
+				std::vector<MoveCollector<false>> moveCollectorsBlack = std::vector<MoveCollector<false>>(MaxSearchDepth);
+
+				template<bool white>
+				MoveCollector<white>& GetMoveCollector() {
+					if constexpr (white) return moveCollectorsWhite[ply];
+					else return moveCollectorsBlack[ply];
+				}
 
 				void Clear() {
 					ply = 0;
@@ -192,7 +200,8 @@ namespace Search {
 					}
 				}
 
-				MoveCollector<white> collector;
+				MoveCollector<white>& collector = ctx.GetMoveCollector<white>();
+				collector.Reset();
 				Gigantua::MoveList::EnumerateMoves<MoveCollector<white>, white>(collector, pos);
 
 				if (!inCheck) {
@@ -306,7 +315,8 @@ namespace Search {
 
 				ctx.pvTable.table[ctx.ply].Clear();
 
-				MoveCollector<white> collector;
+				MoveCollector<white>& collector = ctx.GetMoveCollector<white>();
+				collector.Reset();
 				Gigantua::MoveList::EnumerateMoves<MoveCollector<white>, white>(collector, pos);
 
 				if (collector.size == 0) {
@@ -317,13 +327,19 @@ namespace Search {
 				}
 
 				bool futilityPrune = false;
+
 				if (currOrder < 200 && depth < 6 && !pvNode && !inCheck && !rootNode) {
 					const int staticEval = Evaluate(pos);
-					if (beta > -1000 && (staticEval - 320 * depth) > beta) {
-						return (staticEval + beta) / 2;
+
+					if (staticEval + 1200 < alpha) {
+						return alpha;
 					}
 
-					if (alpha < 1000 && (staticEval + 220 * depth) < alpha) {
+					if (beta > -10000 && (staticEval - 170 * depth) > beta) {
+						return (staticEval + beta)/2;
+					}
+
+					if (alpha < 10000 && (staticEval + 170 * depth) < alpha) {
 						futilityPrune = true;
 					}				
 				}
@@ -366,10 +382,10 @@ namespace Search {
 					collector.SortMoves(m);
 
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[m]]);
-					const auto mcode = collector.moves[collector.index[m]];
+					auto mcode = collector.moves[collector.index[m]];
 					const auto order = collector.order[collector.index[m]];
 
-					if (futilityPrune && m > 6 && order < 100) {
+					if (futilityPrune && m > 5 && order < 200) {
 						break;
 					}
 
@@ -380,13 +396,14 @@ namespace Search {
 						ctx.repetition[ctx.ply] = next.Hash;
 					}
 
-					const bool reduce = m > 0 && !inCheck && depth > 2 && order < 100;
+					const bool reduce = m > 0 && !inCheck && order < 200;
 
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						// more conservative LMR formula
-						int reduction = pvNode ? 0 : int(log2f(depth) * 0.5f + log2f(m) * 0.3f + 0.7f);
+						int reduction = pvNode || m < 3 || depth < 2 ? 0 : int(log2f(depth) * 0.5f + log2f(m) * 0.3f + 0.7f);
 						if (reduction && order > 0) reduction--;
+						if (reduction && order > 100) reduction--;
 
 						// try a null-window search with reduction
 						while ((score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order, true)) > alpha
