@@ -307,10 +307,11 @@ int main() {
     const std::vector<float> gen = importNet("genome0.txt");
     NN::NeuroNetEval nne;
     nne.SetGenome(gen);
-   
+
     std::function<float(const Gigantua::Board&)> costFunc = [&nne](const Gigantua::Board& pos) {
         return nne.Evaluate(pos);
-     };
+    };
+
 
     EngineUCI engine(costFunc);
     std::string command;

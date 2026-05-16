@@ -31,8 +31,8 @@ namespace Search {
 		{
 		private:
 			static constexpr int MatVal = 500000;
-			static constexpr int Killer1MoveCost = 40;
-			static constexpr int Killer2MoveCost = 30;
+			static constexpr int Killer1MoveCost = 400;
+			static constexpr int Killer2MoveCost = 300;
 
 			Search::TTable tTable;
 
@@ -195,7 +195,7 @@ namespace Search {
 					stand_pat = Evaluate(pos);
 					if (stand_pat >= beta) return beta;
 
-					if (stand_pat + 2900 < alpha) {
+					if (stand_pat + 2500 < alpha) {
 						return alpha;
 					}
 				}
@@ -267,7 +267,7 @@ namespace Search {
 			template<bool white> int MiniMaxAB(
 				SearchCtx& ctx,
 				const Gigantua::Board& pos,
-				int8_t depth, int alpha, int beta, int currOrder = 1000000, bool pvNode = false)
+				int8_t depth, int alpha, int beta, bool pvNode = false)
 			{
 				if (ctx.ply >= MaxSearchDepth)
 					return 0;
@@ -326,21 +326,11 @@ namespace Search {
 					return 0;
 				}
 
-				bool futilityPrune = false;
-
-				if (currOrder < 200 && depth < 6 && !pvNode && !inCheck && !rootNode) {
+				if (pvNode && depth > 0 && depth < 6 && !inCheck && !rootNode) {
 					const int staticEval = Evaluate(pos);
 
-					if (staticEval + 1200 < alpha) {
-						return alpha;
-					}
-
-					if (beta > -10000 && (staticEval - 170 * depth) > beta) {
-						return (staticEval + beta)/2;
-					}
-
-					if (alpha < 10000 && (staticEval + 170 * depth) < alpha) {
-						futilityPrune = true;
+					if (beta > -10000 && (staticEval - 300 * depth) >= beta) {
+						return beta;
 					}				
 				}
 
@@ -374,7 +364,7 @@ namespace Search {
 					collector.order[i] = order;
 				}
 
-				uint8_t searchSize = collector.size;
+				const uint8_t searchSize = collector.size;
 				int oldAlpha = alpha;
 				for (uint8_t m = 0; m < searchSize; m++) {
 					if (!searchStarted) break;
@@ -382,13 +372,8 @@ namespace Search {
 					collector.SortMoves(m);
 
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[m]]);
-					auto mcode = collector.moves[collector.index[m]];
+					const auto mcode = collector.moves[collector.index[m]];
 					const auto order = collector.order[collector.index[m]];
-
-					if (futilityPrune && m > 5 && order < 200) {
-						break;
-					}
-
 					const auto next = move.play(pos);
 
 					ctx.ply++;
@@ -396,23 +381,21 @@ namespace Search {
 						ctx.repetition[ctx.ply] = next.Hash;
 					}
 
-					const bool reduce = m > 0 && !inCheck && order < 200;
+					const bool reduce = m > 0 && depth > 2 && !inCheck && order < 100;
 
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						// more conservative LMR formula
-						int reduction = pvNode || m < 3 || depth < 2 ? 0 : int(log2f(depth) * 0.5f + log2f(m) * 0.3f + 0.7f);
-						if (reduction && order > 0) reduction--;
-						if (reduction && order > 100) reduction--;
+						int reduction = pvNode || m < 5 ? 0 : int(log2f(depth) * 0.5f + log2f(m) * 0.3f + 0.3f);
+						if (reduction && order > 50) reduction--;
 
 						// try a null-window search with reduction
-						while ((score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, order, true)) > alpha
-							&& reduction > 0
-							) reduction = 0;
+						while ((score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, true)) > alpha
+								&& reduction > 0) reduction = 0;
 					}
 
 					if (score > alpha)
-						score = -MiniMaxAB<!white>(ctx, next, depth - 1, -beta, -alpha, order);
+						score = -MiniMaxAB<!white>(ctx, next, depth - 1, -beta, -alpha);
 
 					ctx.ply--;
 

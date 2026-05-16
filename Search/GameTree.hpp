@@ -15,7 +15,6 @@ namespace Search {
 
 		struct Edge {
 		private:
-			static constexpr float Smoothing = 0.001f;
 			uint16_t move = 0;
 			uint32_t entries = 0;
 			float sugar = 0;
@@ -35,15 +34,16 @@ namespace Search {
 			uint32_t Entries() const { return entries; }
 			void ResetEntries(uint32_t e) { entries = e; }
 
+			static constexpr float speed = 0.005f;
+
 			template<bool white>
 			void AddSugar(float s) {
-				if constexpr (white) sugar += s * 0.001f;
-				else toxin += s * 0.001f;
+				if constexpr (white) sugar += s * speed;
+				else toxin += s * speed;
 			}
 
-			void AddEntries(float cost) {
-				entries++;
-			}
+			void AddEntries(float cost) { entries++; }
+
 			void MergeEntries(uint32_t e) { entries += e; }
 
 			template <bool white>
@@ -51,16 +51,11 @@ namespace Search {
 			{
 				if (entries == 0) return 40.0f;
 
-				const auto s = (sugar + Smoothing);
-				const auto t = (toxin + Smoothing);
-
 				if constexpr (white) {
-					const auto d = (s) / (entries);
-					return d;
+					return (sugar) / (entries);
 				}
 				else {
-					const auto d = (t) / (entries);
-					return d;
+					return (toxin) / (entries);
 				}
 			}
 		};

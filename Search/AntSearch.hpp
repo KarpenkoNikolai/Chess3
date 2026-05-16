@@ -112,7 +112,7 @@ namespace Ant {
 		Gigantua::Board m_current;
 		AlphaBeta::SearchEngine m_abEngine;
 		std::array<uint64_t, 16> history;
-		static constexpr size_t MaxAnt = 64;
+		static constexpr size_t MaxAnt = 128;
 		static constexpr size_t ABAnt = 128;
 
 		enum class AntStepResult
