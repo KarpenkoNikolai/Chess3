@@ -34,7 +34,7 @@ namespace Search {
 			uint32_t Entries() const { return entries; }
 			void ResetEntries(uint32_t e) { entries = e; }
 
-			static constexpr float speed = 0.005f;
+			static constexpr float speed = 0.002f;
 
 			template<bool white>
 			void AddSugar(float s) {

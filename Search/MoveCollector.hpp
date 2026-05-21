@@ -13,6 +13,7 @@ namespace Search {
 		mutable std::array<uint16_t, MaxMovesInPosition> moves;
 		mutable std::array<int32_t, MaxMovesInPosition> order;
 		mutable std::array<uint8_t, MaxMovesInPosition> index;
+		mutable std::array<uint32_t, MaxMovesInPosition> entries;
 		mutable uint8_t size = 0;
 
 		void Reset() {
@@ -21,9 +22,10 @@ namespace Search {
 
 		bool CollectImpl(const Gigantua::Board::Move<white>& move) const
 		{
-			index[size] = size;
-			order[size] = 0;
 			moves[size] = move.move;
+			order[size] = 0;
+			index[size] = size;
+			entries[size] = 0;
 			size++;
 			return true;
 		}
