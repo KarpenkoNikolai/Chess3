@@ -31,8 +31,8 @@ namespace Search {
 		{
 		private:
 			static constexpr int MatVal = 500000;
-			static constexpr int Killer1MoveCost = 600;
-			static constexpr int Killer2MoveCost = 500;
+			static constexpr int Killer1MoveCost = 60;
+			static constexpr int Killer2MoveCost = 50;
 
 			Search::TTable tTable;
 
@@ -253,7 +253,7 @@ namespace Search {
 						alpha = score;
 
 						if(order < 100) {
-							historyTable[move.from()][move.to()] += 4;
+							historyTable[move.from()][move.to()] += 2;
 						}
 
 						if (score >= beta) {
@@ -352,16 +352,28 @@ namespace Search {
 					&& ctx.evalStack[ctx.ply - 2] != -MatVal
 					&& staticEval > ctx.evalStack[ctx.ply - 2];
 
-				if (alpha == beta - 1 && !inCheck && !rootNode && depth > 0 && depth < 9) {
-					const int margine = improving ? 200 : 150;
-					if ((staticEval + margine * depth) < beta) {
-						int value = QuiescenceSearch<white>(ctx, pos, alpha, beta, 0);
+				if (alpha == beta - 1 && !inCheck && !rootNode && depth > 0 && depth < 6) {
+					const int margine = improving ? 270 : 220;
+					if (beta < 10000 && (staticEval + margine * depth) < beta) {
+						const int value = QuiescenceSearch<white>(ctx, pos, alpha, beta, 0);
 						if(value < beta) {
 							return value;
 						}
 					}				
 				}
 
+				if (beta > -10000 && staticEval >= beta && !pvNode && depth > 4 && !inCheck) {
+						const int R = depth > 6 ? 2 : 1;
+						const auto nullPos = pos.SkipMove();
+						
+						ctx.ply++;
+						int score = -MiniMaxAB<!white>(ctx, nullPos, depth - 1 - R, -beta, -beta + 1, true);
+						ctx.ply--;
+						
+						if (score >= beta) {
+							return beta;
+						}
+				}
 
 				// Move ordering with improved heuristics
 				uint16_t antMove = 0;
@@ -378,7 +390,7 @@ namespace Search {
 							antMove = m;
 						}
 
-						if (e > 1000) {
+						if (e > 500) {
 							for (uint8_t i = 0; i < collector.size; i++) {
 								if (collector.moves[i] == m) {
 									collector.entries[i] = e;
@@ -389,17 +401,14 @@ namespace Search {
 					}
 				}
 
-				bool legalBestMove = false;
 				for (uint8_t i = 0; i < collector.size; i++) {
 					const auto mcode = collector.moves[i];
 					const Gigantua::Board::Move<white> mv(mcode);
 					
 					int order = SimpleSort(pos, mv);
 					
-					if (mcode == bestMove) {
-						order += 1000000;
-						legalBestMove = true;
-					} else if (mcode == antMove) order += 2000000;
+					if (mcode == bestMove) order += 1000000;
+					else if (mcode == antMove) order += 2000000;
 					else if (mcode == ctx.killerMove1[ctx.ply]) order += Killer1MoveCost;
 					else if (mcode == ctx.killerMove2[ctx.ply]) order += Killer2MoveCost;
 					else order += historyTable[mv.from()][mv.to()] / 100;
@@ -431,10 +440,10 @@ namespace Search {
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						// more conservative LMR formula
-						int reduction = pvNode || entries > 10000 ? 0 : int(log2f(depth) * 0.5f + log2f(m) * 0.5f + 1.0f);
+						int reduction = pvNode || entries > 10000 ? 0 : int(log2f(depth) * 0.5f + log2f(m) * 0.3f + 0.5f);
 						if (reduction && order > 50) reduction--;
 						if (reduction && improving) reduction--;
-						if (reduction && entries > 1000) reduction--;
+						if (reduction && entries > 500) reduction--;
 
 						// try a null-window search with reduction
 						while ((score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, true)) > alpha
@@ -559,11 +568,11 @@ namespace Search {
 
 				for (size_t i = 0; i < threadsNum; i++) {
 					searchThreads[i].threadPtr.reset(new std::thread([this, current, milliseconds, i, onWin, threadsNum]() {
-						uint8_t depth = i;
+						uint8_t depth = i * 2;
 						int64_t search_time_ms = milliseconds;
 						
 						while (searchStarted && depth < MaxSearchDepth) {
-							depth++;
+							depth += i == 0 ? 1 : 2;
 							Gigantua::Board pos = current;
 							searchThreads[i].ctx.repetition[0] = pos.Hash;
 							const auto startTime = std::chrono::high_resolution_clock::now();

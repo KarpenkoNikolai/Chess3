@@ -34,7 +34,7 @@ namespace Search {
 			uint32_t Entries() const { return entries; }
 			void ResetEntries(uint32_t e) { entries = e; }
 
-			static constexpr float speed = 0.002f;
+			static constexpr float speed = 1.0f;
 
 			template<bool white>
 			void AddSugar(float s) {
@@ -42,20 +42,22 @@ namespace Search {
 				else toxin += s * speed;
 			}
 
-			void AddEntries(float cost) { entries++; }
+			void AddEntries() {
+				entries++;
+			}
 
 			void MergeEntries(uint32_t e) { entries += e; }
 
 			template <bool white>
 			float getProbability() const
 			{
-				if (entries == 0) return 40.0f;
+				if (entries == 0) return 40000.0f;
 
 				if constexpr (white) {
-					return (sugar) / (entries);
+					return (sugar) / (toxin + entries);
 				}
 				else {
-					return (toxin) / (entries);
+					return (toxin) / (sugar + entries);
 				}
 			}
 		};
