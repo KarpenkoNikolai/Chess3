@@ -43,6 +43,19 @@ namespace Search {
 				std::swap(index[pos], index[hieght]);
 		}
 
+		void SortMovesEntries(uint8_t pos) {
+			uint8_t hieght = pos;
+
+			for (uint8_t i = pos + 1; i < size; i++) {
+				if (entries[index[i]] > entries[index[hieght]]) {
+					hieght = i;
+				}
+			}
+
+			if (pos != hieght)
+				std::swap(index[pos], index[hieght]);
+		}
+
 		void SortMoves() {
 			sortMoves(0, size - 1);
 		}

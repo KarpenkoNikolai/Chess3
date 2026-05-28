@@ -180,7 +180,7 @@ namespace Search {
 			}
 
 			template<bool white>
-			int QuiescenceSearch(SearchCtx& ctx, const Gigantua::Board& pos, int alpha, int beta, int qply) {
+			int QuiescenceSearch(SearchCtx& ctx, const Gigantua::Board& pos, int alpha, int beta, int qply = 0) {
 				if (ctx.ply >= MaxSearchDepth) return 0;
 				if (isDraw(pos)) return 0;
 
@@ -296,7 +296,7 @@ namespace Search {
 				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
 
 				if (depth < 1 && !inCheck) {
-					return QuiescenceSearch<white>(ctx, pos, alpha, beta, 0);
+					return QuiescenceSearch<white>(ctx, pos, alpha, beta);
 				}
 
 				if (!rootNode) {
@@ -352,27 +352,14 @@ namespace Search {
 					&& ctx.evalStack[ctx.ply - 2] != -MatVal
 					&& staticEval > ctx.evalStack[ctx.ply - 2];
 
-				if (alpha == beta - 1 && !inCheck && !rootNode && depth > 0 && depth < 6) {
+				if (alpha == beta - 1 && beta < 100000 && !rootNode && depth > 0 && depth < 8) {
 					const int margine = improving ? 270 : 220;
-					if (beta < 10000 && (staticEval + margine * depth) < beta) {
-						const int value = QuiescenceSearch<white>(ctx, pos, alpha, beta, 0);
+					if ((staticEval + margine * depth) < beta) {
+						const int value = QuiescenceSearch<white>(ctx, pos, alpha, beta);
 						if(value < beta) {
 							return value;
 						}
 					}				
-				}
-
-				if (beta > -10000 && staticEval >= beta && !pvNode && depth > 4 && !inCheck) {
-						const int R = depth > 6 ? 2 : 1;
-						const auto nullPos = pos.SkipMove();
-						
-						ctx.ply++;
-						int score = -MiniMaxAB<!white>(ctx, nullPos, depth - 1 - R, -beta, -beta + 1, true);
-						ctx.ply--;
-						
-						if (score >= beta) {
-							return beta;
-						}
 				}
 
 				// Move ordering with improved heuristics
@@ -390,12 +377,10 @@ namespace Search {
 							antMove = m;
 						}
 
-						if (e > 500) {
-							for (uint8_t i = 0; i < collector.size; i++) {
-								if (collector.moves[i] == m) {
-									collector.entries[i] = e;
-									break;
-								}
+						for (uint8_t i = 0; i < collector.size; i++) {
+							if (collector.moves[i] == m) {
+								collector.entries[i] = e;
+								break;
 							}
 						}
 					}
@@ -422,10 +407,11 @@ namespace Search {
 					if (!searchStarted) break;
 
 					collector.SortMoves(m);
+					const auto order = collector.order[collector.index[m]];
+					if (order == 0) collector.SortMovesEntries(m);
 
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[m]]);
 					const auto mcode = collector.moves[collector.index[m]];
-					const auto order = collector.order[collector.index[m]];
 					const auto entries = collector.entries[collector.index[m]];
 
 					const auto next = move.play(pos);
@@ -435,15 +421,15 @@ namespace Search {
 						ctx.repetition[ctx.ply] = next.Hash;
 					}
 
-					const bool reduce = m > 0 && entries < 50000 && !inCheck && order < 100;
+					const bool reduce = m > 0 && beta > -100000 && alpha > -100000 && entries < 50000 && !inCheck && order < 100;
 
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						// more conservative LMR formula
-						int reduction = pvNode || entries > 10000 ? 0 : int(log2f(depth) * 0.5f + log2f(m) * 0.3f + 0.5f);
+						int reduction = pvNode || entries > 10000 ? 0 : int(log2f(depth) * 0.5f + log2f(m) * 0.3f + 1.0f);
 						if (reduction && order > 50) reduction--;
 						if (reduction && improving) reduction--;
-						if (reduction && entries > 500) reduction--;
+						if (reduction && entries > 1000) reduction--;
 
 						// try a null-window search with reduction
 						while ((score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, true)) > alpha

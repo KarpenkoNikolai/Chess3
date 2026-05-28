@@ -112,8 +112,8 @@ namespace Ant {
 		Gigantua::Board m_current;
 		AlphaBeta::SearchEngine m_abEngine;
 		std::array<uint64_t, 16> history;
-		static constexpr size_t MaxAnt = 128;
-		static constexpr size_t ABAnt = 128;
+		static constexpr size_t MaxAnt = 64;
+		static constexpr size_t ABAnt = 64;
 
 		enum class AntStepResult
 		{
@@ -285,10 +285,10 @@ namespace Ant {
 
 			float cost = 0;
 			if(stepResult == AntStepResult::isMate) {
-				if(white == position.status.WhiteMove())
-					cost = std::min(-10000.0f, -MatVal + 500 * ply);
+				if (white == position.status.WhiteMove())
+					cost = std::min(-1000.0f, -MatVal + 500 * ply);
 				else
-					cost = std::max(10000.0f, MatVal - 500 * ply);
+					cost = std::max(1000.0f, MatVal - 500 * ply);
 			}
 			else {
 
@@ -349,7 +349,7 @@ namespace Ant {
 		void Set(const Gigantua::Board& brd) {
 			Stop();
 			m_current = brd;
-			m_currentCost = m_costFunc(brd);
+			m_currentCost = 0;// m_costFunc(brd);
 		}
 
 		void SetHistory(const std::array<uint64_t, 16>& h) {

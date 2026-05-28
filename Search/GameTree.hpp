@@ -34,12 +34,10 @@ namespace Search {
 			uint32_t Entries() const { return entries; }
 			void ResetEntries(uint32_t e) { entries = e; }
 
-			static constexpr float speed = 1.0f;
-
 			template<bool white>
 			void AddSugar(float s) {
-				if constexpr (white) sugar += s * speed;
-				else toxin += s * speed;
+				if constexpr (white) sugar += s;
+				else toxin += s;
 			}
 
 			void AddEntries() {
@@ -54,10 +52,10 @@ namespace Search {
 				if (entries == 0) return 40000.0f;
 
 				if constexpr (white) {
-					return (sugar) / (toxin + entries);
+					return (sugar + 1.0f) / (100.0f * entries);
 				}
 				else {
-					return (toxin) / (sugar + entries);
+					return (toxin + 1.0f) / (100.0f * entries);
 				}
 			}
 		};
