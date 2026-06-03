@@ -31,29 +31,28 @@ namespace Search {
 		}
 
 		void SortMoves(uint8_t pos) {
-			uint8_t hieght = pos;
+			uint8_t height = pos;
 
 			for (uint8_t i = pos + 1; i < size; i++) {
-				if (order[index[i]] > order[index[hieght]]) {
-					hieght = i;
+				if (order[index[i]] > order[index[height]]) {
+					height = i;
 				}
 			}
 
-			if (pos != hieght)
-				std::swap(index[pos], index[hieght]);
+			if (pos != height)
+				std::swap(index[pos], index[height]);
 		}
 
 		void SortMovesEntries(uint8_t pos) {
-			uint8_t hieght = pos;
-
+			uint8_t height = pos;
 			for (uint8_t i = pos + 1; i < size; i++) {
-				if (entries[index[i]] > entries[index[hieght]]) {
-					hieght = i;
+				if (entries[index[i]] > entries[index[height]]) {
+					height = i;
 				}
 			}
 
-			if (pos != hieght)
-				std::swap(index[pos], index[hieght]);
+			if (pos != height)
+				std::swap(index[pos], index[height]);
 		}
 
 		void SortMoves() {
