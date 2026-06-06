@@ -329,7 +329,7 @@ namespace Search {
 				int ttCost = TTable::NAN_VAL;
 				if (!rootNode) {
 					ttCost = tTable.Get(pos, alpha, beta, depth, bestMove);
-					if (alpha == beta - 1 && ttCost != TTable::NAN_VAL) {
+					if (!pvNode && ttCost != TTable::NAN_VAL) {
 						return ScoreFromTT(ttCost, ctx.ply);
 					}
 				}

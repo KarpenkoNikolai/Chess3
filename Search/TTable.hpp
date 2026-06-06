@@ -58,7 +58,7 @@ namespace Search {
 
 		};
 
-		static constexpr uint8_t BucketSize = 2;
+		static constexpr uint8_t BucketSize = 4;
 
 		typedef std::array<Node, BucketSize> Bucket;
 
