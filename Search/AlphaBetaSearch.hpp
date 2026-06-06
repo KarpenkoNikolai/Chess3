@@ -211,7 +211,7 @@ namespace Search {
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply >= 2);
+						collector.order[i] = SimpleSort(pos, mv, qply >= 4);
 						collector.order[i] += historyTable[mv.from()][mv.to()] / 100;
 					}
 				}
@@ -363,24 +363,28 @@ namespace Search {
 					&& staticEval > ctx.evalStack[ctx.ply - 2];
 
 				if (alpha == beta - 1 && !inCheck && beta < 100000 && !rootNode && depth < 7) {
-					const int margine = improving ? 370 : 320;
-					if ((staticEval - margine * depth) > beta) {
+					const int margine = improving ? 370 : 270;
+					if ((staticEval - margine * (depth - improving)) > beta) {
 						return (staticEval + beta)/2;
 					}				
 				}
 
-				if (!isNull && !pvNode && depth >= 4 && !inCheck) {
+				if (!isNull && !pvNode && !inCheck && depth >= 4) {
 					// Null Move Pruning
-					int R = 1;
+					int R = 2;
 					if (depth >= 6) R++;
 					if (depth >= 8) R++;
 					const auto nullPos = pos.SkipMove();
-					int score = -MiniMaxAB<!white, true>(ctx, nullPos, depth - 1 - R, -beta, -beta + 1, true);
+					int score = -MiniMaxAB<!white, true>(ctx, nullPos, depth - R, -beta, -beta + 1, true);
 					if (score >= beta) {
 						return beta;
 					}
 				}
 
+				//TT reduction
+				if(!pvNode && !inCheck && !rootNode && bestMove == 0 && ttCost == TTable::NAN_VAL) {
+					depth--;
+				}
 
 				// Move ordering with improved heuristics
 				uint16_t antMove = 0;
@@ -429,7 +433,7 @@ namespace Search {
 				int multiCutReduction = 0;
 				if (!pvNode && !rootNode && depth >= 6 && !inCheck && searchSize >= 6) {
 					constexpr int cutThreshold = 3;
-					constexpr int testMoves = 7;
+					constexpr int testMoves = 6;
 					int cutCount = 0;
 
 					for (uint8_t i = 0; i < testMoves && i < searchSize; i++) {
@@ -488,7 +492,7 @@ namespace Search {
 						ctx.repetition[ctx.ply] = next.Hash;
 					}
 
-					const bool reduce = m > 0 && 
+					const bool reduce = m > 0 &&
 						beta > -100000 && alpha > -100000 && 
 						entries < 50000 && 
 						!inCheck && order < 100;
@@ -496,18 +500,15 @@ namespace Search {
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						mr++;
-						int reduction = pvNode ? 0 : int(
-							log2f(depth) * 0.5f + log2f(mr) * 0.3f + 0.7f);
+						int reduction = pvNode ? 0 : int(log2f(depth) * 0.5f + log2f(mr) * 0.3f + 0.7f);
 						
 						// Multi-Cut-Reduktion anwenden
 						reduction += multiCutReduction;
 						
 						if (reduction && order > 50) reduction--;
 						if (reduction && improving) reduction--;
-						if (reduction && entries > 1000) reduction--;
 						
-						while ((score = -MiniMaxAB<!white>(
-								ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, true)) > alpha
+						while ((score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, true)) > alpha
 							   && reduction > 0)
 							reduction = 0;
 					}
@@ -539,7 +540,6 @@ namespace Search {
 				}
 
 				const auto flag = alpha >= beta ? TTable::Flag::Beta : (alpha == oldAlpha ? TTable::Flag::Alpha : TTable::Flag::Value);
-
 				tTable.Put(pos, alpha, bestMove, depth, flag);
 
 				return alpha;

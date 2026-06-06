@@ -145,11 +145,6 @@ namespace Search {
 			return result;
 		}
 
-		if (move.type() == Gigantua::MoveType::KingCastleLeft ||
-			move.type() == Gigantua::MoveType::KingCastleRight) result += 10;
-
-		if (move.type() == Gigantua::MoveType::PawnMove) result += 5;
-
 		return result;
 	}
 

@@ -80,7 +80,7 @@ namespace NN
 		float Evaluate(const Gigantua::Board& brd)
 		{
 			float nnEval = m_nn.Evaluate(brd);
-			if (abs(nnEval) > 2700) {
+			if (abs(nnEval) > 2300) {
 				const float matEval = 2.0f*(EvaluateMaterial(brd) + EvaluateQueenKingMate(brd));
 				nnEval += brd.status.WhiteMove() ? matEval : -matEval;
 			}

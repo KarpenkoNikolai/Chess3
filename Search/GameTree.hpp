@@ -40,6 +40,13 @@ namespace Search {
 				else toxin += s;
 			}
 
+			template<bool white>
+			float Sugar() const {
+				if constexpr (white) return sugar;
+				else return toxin;
+			}
+
+
 			void AddEntries() {
 				entries++;
 			}
