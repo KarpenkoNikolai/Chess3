@@ -103,8 +103,9 @@ int main() {
 	//Gigantua::Board p("8/8/8/8/4QK1P/2k5/8/8 w - - 6 4");
 	//Gigantua::Board p("6k1/8/6P1/6K1/7P/8/8/8 w - - 3 67");
 
-	Gigantua::Board p("rnbqr1k1/pp4b1/1n1p2p1/2pN2p1/5P2/1Q6/PP2B1PP/R1B2RK1 w - - 0 16");// d5f6
+	//Gigantua::Board p("rnbqr1k1/pp4b1/1n1p2p1/2pN2p1/5P2/1Q6/PP2B1PP/R1B2RK1 w - - 0 16");// d5f6
 	//Gigantua::Board p("r5k1/b1p2pp1/p1n1b2p/P3p3/B3Pq2/2r1NN1P/1Q3PP1/R2R3K b - - 1 24"); //c6d4
+	Gigantua::Board p("r2q1rk1/pp3pn1/3pp3/8/3NP1p1/2N5/PPPQ4/2K4R w - - 0 20"); //d2h6
 
 	std::cout << nne.Evaluate(p) << std::endl;
 

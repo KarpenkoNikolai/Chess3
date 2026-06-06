@@ -332,7 +332,7 @@ namespace Search {
 				int ttCost = TTable::NAN_VAL;
 				if (!rootNode) {
 					ttCost = tTable.Get(pos, alpha, beta, depth, bestMove);
-					if (!pvNode && ttCost != TTable::NAN_VAL) {
+					if (alpha == beta - 1 && ttCost != TTable::NAN_VAL) {
 						return ScoreFromTT(ttCost, ctx.ply);
 					}
 				}
@@ -382,7 +382,7 @@ namespace Search {
 				}
 
 				//TT reduction
-				if(!pvNode && !inCheck && !rootNode && bestMove == 0 && ttCost == TTable::NAN_VAL) {
+				if(depth > 3 && !pvNode && !inCheck && !rootNode && bestMove == 0 && ttCost == TTable::NAN_VAL) {
 					depth--;
 				}
 
@@ -464,6 +464,7 @@ namespace Search {
 					}
 				}
     
+				auto ttFlag = TTable::Flag::Alpha;
 				for (uint8_t m = 0; m < searchSize; m++) {
 					if (!searchStarted) break;
 					
@@ -521,9 +522,11 @@ namespace Search {
 					if (score > alpha) {
 						bestMove = mcode;
 						alpha = score;
+						ttFlag = TTable::Flag::Value;
 						ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
 					
 						if (alpha >= beta) {
+							ttFlag = TTable::Flag::Beta;
 							// Update killer moves
 							if (!inCheck && order < 100) {
 								ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
@@ -539,8 +542,7 @@ namespace Search {
 					}
 				}
 
-				const auto flag = alpha >= beta ? TTable::Flag::Beta : (alpha == oldAlpha ? TTable::Flag::Alpha : TTable::Flag::Value);
-				tTable.Put(pos, alpha, bestMove, depth, flag);
+				tTable.Put(pos, alpha, bestMove, depth, ttFlag);
 
 				return alpha;
 			}
