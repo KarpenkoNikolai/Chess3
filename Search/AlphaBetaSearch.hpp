@@ -31,6 +31,7 @@ namespace Search {
 		{
 		private:
 			static constexpr int MatVal = 500000;
+			static constexpr int InMateVal = MatVal - MaxSearchDepth;
 			static constexpr int Killer1MoveCost = 60;
 			static constexpr int Killer2MoveCost = 50;
 
@@ -128,15 +129,11 @@ namespace Search {
 				return m_costFunc(brd);
 			}
 
-			bool IsMateScore(int score) const {
-				return std::abs(score) > (MatVal - MaxSearchDepth*2);
-			}
-
 			int ScoreFromTT(int score, int ply) const {
-				if (score >= (MatVal - MaxSearchDepth)) {
+				if (score >= InMateVal) {
 					return MatVal - ply;
 				}
-				if (score <= -(MatVal - MaxSearchDepth)) {
+				if (score <= -InMateVal) {
 					return -MatVal + ply;
 				}
 				return score;
@@ -269,7 +266,7 @@ namespace Search {
 							return beta;
 						}
 
-						if (alpha > MatVal - MaxSearchDepth) {
+						if (alpha > InMateVal) {
 							return alpha;
 						}
 					}
@@ -362,7 +359,7 @@ namespace Search {
 					&& ctx.evalStack[ctx.ply - 2] != -MatVal
 					&& staticEval > ctx.evalStack[ctx.ply - 2];
 
-				if (alpha == beta - 1 && !inCheck && beta < 100000 && !rootNode && depth < 7) {
+				if (alpha == beta - 1 && !inCheck && beta > -InMateVal && !rootNode && depth < 7) {
 					const int margine = improving ? 370 : 270;
 					if ((staticEval - margine * (depth - improving)) > beta) {
 						return (staticEval + beta)/2;
@@ -431,7 +428,7 @@ namespace Search {
 				
 				// Multi-Cut Pruning
 				int multiCutReduction = 0;
-				if (!pvNode && !rootNode && depth >= 6 && !inCheck && searchSize >= 6) {
+				if (!pvNode && !rootNode && depth >= 6 && !inCheck && abs(beta) < InMateVal && searchSize >= 6) {
 					constexpr int cutThreshold = 3;
 					constexpr int testMoves = 6;
 					int cutCount = 0;
@@ -494,7 +491,7 @@ namespace Search {
 					}
 
 					const bool reduce = m > 0 &&
-						beta > -100000 && alpha > -100000 && 
+						beta > -InMateVal && alpha > -InMateVal && 
 						entries < 50000 && 
 						!inCheck && order < 100;
 
@@ -537,7 +534,7 @@ namespace Search {
 						}
 					}
 
-					if(alpha > MatVal - MaxSearchDepth) {
+					if(alpha > InMateVal) {
 						break;
 					}
 				}
@@ -657,7 +654,7 @@ namespace Search {
 									std::cout << "d" << int(depth) << "s" << score << "ms" << dur_ms.count() << "(" << Gigantua::Board::moveStr(currentBestMove) << ")" << std::endl;
 								}
 
-								if (IsMateScore(score)) {
+								if (abs(score) >= InMateVal) {
 									if (onWin) {
 										onWin(BestMove());
 									}
