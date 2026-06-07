@@ -293,13 +293,13 @@ namespace Ant {
 			else {
 
 				if (position.status.WhiteMove() == white && Gigantua::MoveList::InCheck<white>(position))
-					cost = -1;
+					cost = 0;
 				else if (position.status.WhiteMove() != white && Gigantua::MoveList::InCheck<!white>(position))
-					cost = 1;
+					cost = 0;
 				else if (white == position.status.WhiteMove())
-					cost = m_costFunc(position) - m_currentCost;
+					cost = m_costFunc(position);
 				else
-					cost = -m_costFunc(position) - m_currentCost;
+					cost = -m_costFunc(position);
 
 			}
 
@@ -331,8 +331,6 @@ namespace Ant {
 			}
 		}
 
-		float m_currentCost = 0;
-
 	public:
 		Engine(std::function<float(const Gigantua::Board&)> costFunc, size_t treeSize = 1000000, size_t ab_tt_size = 4000000)
 			: m_costFunc(costFunc), m_searchTree(treeSize), m_abEngine(costFunc, ab_tt_size)
@@ -349,7 +347,6 @@ namespace Ant {
 		void Set(const Gigantua::Board& brd) {
 			Stop();
 			m_current = brd;
-			m_currentCost = 0;// m_costFunc(brd);
 		}
 
 		void SetHistory(const std::array<uint64_t, 16>& h) {

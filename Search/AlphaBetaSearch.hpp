@@ -73,7 +73,6 @@ namespace Search {
 			struct SearchCtx {
 				uint8_t ply = 0;
 				PvTable pvTable;
-				std::array<int, MaxSearchDepth> evalStack = {};
 				std::array<uint16_t, MaxSearchDepth> killerMove1 = {};
 				std::array<uint16_t, MaxSearchDepth> killerMove2 = {};
 				std::array<uint64_t, MaxSearchDepth> repetition = {};
@@ -89,7 +88,6 @@ namespace Search {
 				void Clear() {
 					ply = 0;
 					pvTable.Clear();
-					evalStack.fill(0);
 					killerMove1.fill(0);
 					killerMove2.fill(0);
 					repetition.fill(0);
@@ -238,7 +236,7 @@ namespace Search {
 
 					if (isCapture && !inCheck) {
 						const int staticGain = order;
-						if ((stand_pat + staticGain + 500) <= alpha) {
+						if ((stand_pat + staticGain + 600) <= alpha) {
 							continue;
 						}
 					}
@@ -334,9 +332,7 @@ namespace Search {
 					}
 				}
 
-
 				ctx.pvTable.table[ctx.ply].Clear();
-				ctx.evalStack[ctx.ply] = -MatVal;
 
 				MoveCollector<white>& collector = ctx.GetMoveCollector<white>();
 				collector.Reset();
@@ -349,21 +345,12 @@ namespace Search {
 					return 0;
 				}
 
-				int staticEval = 0;
-				if(!inCheck) {
-					staticEval = Evaluate(pos);
-					ctx.evalStack[ctx.ply] = staticEval;
-				}
-
-				const bool improving = ctx.ply >= 2 && !inCheck
-					&& ctx.evalStack[ctx.ply - 2] != -MatVal
-					&& staticEval > ctx.evalStack[ctx.ply - 2];
-
-				if (alpha == beta - 1 && !inCheck && beta > -InMateVal && !rootNode && depth < 7) {
-					const int margine = improving ? 370 : 270;
-					if ((staticEval - margine * (depth - improving)) > beta) {
+				if (alpha == beta - 1 && beta > -InMateVal && !inCheck && !isNull && !rootNode && depth < 7) {
+					int staticEval = Evaluate(pos);
+					const int margine = 220;
+					if ((staticEval - margine * depth) > beta) {
 						return (staticEval + beta)/2;
-					}				
+					}
 				}
 
 				if (!isNull && !pvNode && !inCheck && depth >= 4) {
@@ -378,8 +365,8 @@ namespace Search {
 					}
 				}
 
-				//TT reduction
-				if(depth > 3 && !pvNode && !inCheck && !rootNode && bestMove == 0 && ttCost == TTable::NAN_VAL) {
+				// TT reduction
+				if(depth > 3 && alpha == beta - 1 && !inCheck && !rootNode && bestMove == 0 && ttCost == TTable::NAN_VAL) {
 					depth--;
 				}
 
@@ -426,11 +413,11 @@ namespace Search {
 				int oldAlpha = alpha;
 				uint8_t mr = 0;
 				
-				// Multi-Cut Pruning
+				// Multi-Cut Pruning with gradient awareness
 				int multiCutReduction = 0;
-				if (!pvNode && !rootNode && depth >= 6 && !inCheck && abs(beta) < InMateVal && searchSize >= 6) {
-					constexpr int cutThreshold = 3;
-					constexpr int testMoves = 6;
+				if (!pvNode && !rootNode && depth >= 6 && !inCheck && abs(beta) < InMateVal && searchSize >= 7) {
+					const int cutThreshold = 4;  // More aggressive in improving positions
+					constexpr int testMoves = 7;
 					int cutCount = 0;
 
 					for (uint8_t i = 0; i < testMoves && i < searchSize; i++) {
@@ -444,7 +431,7 @@ namespace Search {
 							ctx.repetition[ctx.ply] = next.Hash;
 						}
 
-						const int reducedDepth = depth - 4;
+						const int reducedDepth = depth - 3;
 						const int score = -MiniMaxAB<!white>(ctx, next, reducedDepth, -beta, -beta + 1, true);
 						ctx.ply--;
 
@@ -456,12 +443,11 @@ namespace Search {
 						}
 					}
 
-					if (cutCount >= 2) {
-						multiCutReduction = 1;
+					if (cutCount > 2) {
+						multiCutReduction = 1;  // Stronger reduction in stable advantages
 					}
 				}
     
-				auto ttFlag = TTable::Flag::Alpha;
 				for (uint8_t m = 0; m < searchSize; m++) {
 					if (!searchStarted) break;
 					
@@ -498,14 +484,12 @@ namespace Search {
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						mr++;
-						int reduction = pvNode ? 0 : int(log2f(depth) * 0.5f + log2f(mr) * 0.3f + 0.7f);
-						
-						// Multi-Cut-Reduktion anwenden
+						int reduction = pvNode ? 0 : int(logf(depth) * logf(mr) / 1.75f + 0.75f);
+												
 						reduction += multiCutReduction;
-						
 						if (reduction && order > 50) reduction--;
-						if (reduction && improving) reduction--;
-						
+
+						// LMR with re-search
 						while ((score = -MiniMaxAB<!white>(ctx, next, depth - 1 - reduction, -alpha - 1, -alpha, true)) > alpha
 							   && reduction > 0)
 							reduction = 0;
@@ -519,11 +503,9 @@ namespace Search {
 					if (score > alpha) {
 						bestMove = mcode;
 						alpha = score;
-						ttFlag = TTable::Flag::Value;
 						ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
 					
 						if (alpha >= beta) {
-							ttFlag = TTable::Flag::Beta;
 							// Update killer moves
 							if (!inCheck && order < 100) {
 								ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
@@ -539,7 +521,8 @@ namespace Search {
 					}
 				}
 
-				tTable.Put(pos, alpha, bestMove, depth, ttFlag);
+				const auto flag = alpha >= beta ? TTable::Flag::Beta : (alpha == oldAlpha ? TTable::Flag::Alpha : TTable::Flag::Value);
+				tTable.Put(pos, alpha, bestMove, depth, flag);
 
 				return alpha;
 			}

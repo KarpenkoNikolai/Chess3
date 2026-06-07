@@ -59,10 +59,10 @@ namespace Search {
 				if (entries == 0) return 40000.0f;
 
 				if constexpr (white) {
-					return (sugar + 100.0f) / (toxin + 300 * entries);
+					return (sugar + 1.0f) / (toxin + entries);
 				}
 				else {
-					return (toxin + 100.0f) / (sugar + 300 * entries);
+					return (toxin + 1.0f) / (sugar + entries);
 				}
 			}
 		};
