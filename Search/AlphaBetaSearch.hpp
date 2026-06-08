@@ -206,7 +206,7 @@ namespace Search {
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply >= 4);
+						collector.order[i] = SimpleSort(pos, mv, qply >= 2);
 						collector.order[i] += historyTable[mv.from()][mv.to()] / 100;
 					}
 				}
@@ -327,7 +327,7 @@ namespace Search {
 				int ttCost = TTable::NAN_VAL;
 				if (!rootNode) {
 					ttCost = tTable.Get(pos, alpha, beta, depth, bestMove);
-					if (!pvNode && ttCost != TTable::NAN_VAL) {
+					if (ttCost != TTable::NAN_VAL) {
 						return ScoreFromTT(ttCost, ctx.ply);
 					}
 				}
@@ -345,11 +345,11 @@ namespace Search {
 					return 0;
 				}
 
-				if (alpha == beta - 1 && beta > -InMateVal && !inCheck && !isNull && !rootNode && depth < 7) {
+				if (alpha == beta - 1 && beta > -InMateVal && !inCheck && !isNull && !rootNode && depth < 6) {
 					int staticEval = Evaluate(pos);
-					const int margine = 220;
-					if ((staticEval - margine * depth) > beta) {
-						return (staticEval + beta)/2;
+					const int margin = 270 * depth;
+					if ((staticEval - margin) > beta) {
+						return (staticEval + beta) / 2;
 					}
 				}
 
@@ -431,19 +431,20 @@ namespace Search {
 							ctx.repetition[ctx.ply] = next.Hash;
 						}
 
-						const int reducedDepth = depth - 3;
+						const int reducedDepth = depth - 4;
 						const int score = -MiniMaxAB<!white>(ctx, next, reducedDepth, -beta, -beta + 1, true);
 						ctx.ply--;
 
 						if (score >= beta) {
 							cutCount++;
 							if (cutCount >= cutThreshold) {
+								tTable.Put(pos, beta, bestMove, depth, TTable::Flag::Beta);
 								return beta;
 							}
 						}
 					}
 
-					if (cutCount > 2) {
+					if (cutCount > 0) {
 						multiCutReduction = 1;  // Stronger reduction in stable advantages
 					}
 				}
@@ -484,7 +485,7 @@ namespace Search {
 					int score = std::numeric_limits<int>::max();
 					if (reduce) {
 						mr++;
-						int reduction = pvNode ? 0 : int(logf(depth) * logf(mr) / 1.75f + 0.75f);
+						int reduction = pvNode ? 0 : int(log2f(depth) * 0.5f  + log2f(mr) *0.3f + 0.7f);
 												
 						reduction += multiCutReduction;
 						if (reduction && order > 50) reduction--;
@@ -496,7 +497,7 @@ namespace Search {
 					}
 					
 					if (score > alpha)
-						score = -MiniMaxAB<!white>(ctx, next, depth - 1 + extension - multiCutReduction, -beta, -alpha);
+						score = -MiniMaxAB<!white>(ctx, next, depth - 1 + extension, -beta, -alpha);
 					
 					ctx.ply--;
 					
