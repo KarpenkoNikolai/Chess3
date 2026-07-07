@@ -32,8 +32,8 @@ namespace Search {
 		private:
 			static constexpr int MatVal = 500000;
 			static constexpr int InMateVal = MatVal - MaxSearchDepth;
-			static constexpr int Killer1MoveCost = 60;
-			static constexpr int Killer2MoveCost = 50;
+			static constexpr int Killer1MoveCost = 600;
+			static constexpr int Killer2MoveCost = 500;
 
 			Search::TTable tTable;
 
@@ -69,6 +69,39 @@ namespace Search {
 				PvLine GetBest() const { return table[0]; }
 			};
 
+			// Aspiration window tracking per thread
+			struct AspirationWindow {
+				int score = 0;
+				int delta = 50;
+				uint8_t failHighCount = 0;
+				uint8_t failLowCount = 0;
+
+				void Reset(int prevScore) {
+					score = prevScore;
+					delta = 50;
+					failHighCount = 0;
+					failLowCount = 0;
+				}
+
+				void ExpandOnFailHigh() {
+					delta = std::min(2000, delta * 2);
+					failHighCount++;
+				}
+
+				void ExpandOnFailLow() {
+					delta = std::min(2000, delta * 2);
+					failLowCount++;
+				}
+
+				std::pair<int, int> GetWindow() const {
+					return { score - delta, score + delta };
+				}
+
+				bool ShouldRetry(int result) const {
+					return (result <= score - delta) || (result >= score + delta);
+				}
+			};
+
 			// Search context per thread
 			struct SearchCtx {
 				uint8_t ply = 0;
@@ -80,6 +113,7 @@ namespace Search {
 				std::vector<MoveCollector<true>> moveCollectorsWhite = std::vector<MoveCollector<true>>(MaxSearchDepth);
 				std::vector<MoveCollector<false>> moveCollectorsBlack = std::vector<MoveCollector<false>>(MaxSearchDepth);
 				uint64_t nodes = 0;
+				AspirationWindow aspirationWindow;
 
 				template<bool white>
 				MoveCollector<white>& GetMoveCollector() {
@@ -119,12 +153,10 @@ namespace Search {
 			std::vector<SearchThread> searchThreads;
 			const GameTree* antTreePtr = nullptr;
 			std::array<uint64_t, 16> history;
-			std::array<std::array<int, 64>, 64> historyTable; // [from][to]
 
 			void ClearSearch()
 			{
 				tTable.Clear();
-				for (auto& row : historyTable) row.fill(0);
 			}
 
 			int Evaluate(const Gigantua::Board& brd) const {
@@ -211,7 +243,7 @@ namespace Search {
 					if (stand_pat >= beta) return beta;
 
 					// Delta pruning: wenn selbst mit bester Figur nicht Alpha erreicht wird
-					const int bigDelta = 2500;
+					const int bigDelta = 2700;
 					if (stand_pat + bigDelta < alpha) {
 						return alpha;
 					}
@@ -255,7 +287,7 @@ namespace Search {
 					// SEE pruning in Quiescence
 					if (isCapture && !inCheck) {
 						const int staticGain = order;
-						if ((stand_pat + staticGain + 200) <= alpha) {
+						if ((stand_pat + staticGain + 700) <= alpha) {
 							continue;
 						}
 					}
@@ -275,16 +307,8 @@ namespace Search {
 					if (score > alpha) {
 						alpha = score;
 
-						if(order < 100) {
-							historyTable[move.from()][move.to()] += 1;
-						}
-
 						if (score >= beta) {
 							return beta;
-						}
-
-						if (alpha > InMateVal) {
-							return alpha;
 						}
 					}
 				}
@@ -396,23 +420,24 @@ namespace Search {
 				}
 
 				// Reverse Futility Pruning (Static Null Move Pruning)
-				if (!pvNode && !inCheck && !isNull && !rootNode && depth <= 8 && beta > -InMateVal) {
-					int margin = 170 - (improving ? 50 : 0);
+				if (!pvNode && !inCheck && depth <= 10 && !isNull && !rootNode && beta > -InMateVal) {
+					int margin = 250 - (improving ? 100 : 0);
 					if (staticEval - margin * depth >= beta) {
 						return staticEval;
 					}
 				}
 
-				// Null Move Pruning
+				if(depth > 3 && ttMove == 0) {
+					depth--;
+				}
+
+
+				// Null Move Pruning (skip if under mate threat)
 				if (!inCheck && !pvNode && !isNull && !rootNode && depth >= 4 && beta > -InMateVal && staticEval >= beta) {
-					int R = 1 + depth / 4 + std::min(3, (staticEval - beta) / 200);
+					int R = 1 + depth / 3;
 					
 					ctx.ply++;
 					const auto nullPos = pos.SkipMove();
-					if (ctx.ply < MaxSearchDepth) {
-						ctx.repetition[ctx.ply] = nullPos.Hash;
-					}
-					
 					int score = -MiniMaxAB<!white, true>(ctx, nullPos, depth - R, -beta, -beta + 1);
 					
 					ctx.ply--;
@@ -425,15 +450,14 @@ namespace Search {
 					}
 				}
 
-				if(!pvNode && depth <= 8 && !inCheck) {
-					// Razoring
-					int razorMargin = 270 - (improving ? 50 : 0);
-					if (staticEval + razorMargin * depth <= alpha) {
-						int score = QuiescenceSearch<white>(ctx, pos, alpha, alpha + 1);
-						if (score <= alpha) {
-							return score;
-						}
-					}
+				// Extended Futility Pruning: Skip quiet moves if position is hopeless (not under mate threat)
+				bool doFutilityPruning = false;
+				if (!pvNode && !inCheck && depth <= 7 && alpha < InMateVal) {
+					
+					// Depth-dependent futility margins
+					static constexpr int FutilityMargins[8] = {0, 200, 350, 500, 700, 950, 1250, 1600};
+					if(staticEval + FutilityMargins[depth] + (improving ? 100 : 0) <= alpha)
+						doFutilityPruning = true;
 				}
 
 				// Move ordering
@@ -443,7 +467,7 @@ namespace Search {
 					for (uint8_t j = 0; j < nodePtr->edges.size(); j++) {
 						if(nodePtr->edges[j].Entries() == 0) continue;
 
-						const auto p = nodePtr->edges[j].getProbability<white>();
+					 	const auto p = nodePtr->edges[j].getProbability<white>();
 						const auto m = nodePtr->edges[j].Move();
 						const auto e = nodePtr->edges[j].Entries();
 						if (p > max_p) {
@@ -471,11 +495,6 @@ namespace Search {
 					else if (mcode == antMove) order += 2000000;
 					else if (mcode == ctx.killerMove1[ctx.ply]) order += Killer1MoveCost;
 					else if (mcode == ctx.killerMove2[ctx.ply]) order += Killer2MoveCost;
-					else {
-						// History heuristic
-						int histBonus = historyTable[mv.from()][mv.to()] / 100;
-						order += std::min(histBonus, 900);
-					}
 					
 					collector.order[i] = order;
 				}
@@ -483,7 +502,6 @@ namespace Search {
 				const uint8_t searchSize = collector.size;
 				int oldAlpha = alpha;
 				int bestScore = -std::numeric_limits<int>::max();
-				int moveCount = 0;
 				int quietMoveCount = 0;
 				uint16_t bestMoveFound = 0;
     
@@ -498,51 +516,45 @@ namespace Search {
 					const auto mcode = collector.moves[collector.index[m]];
 
 					const bool isCapture = order > 100 && order < 9000;
-					const bool isQuiet = order < 100;
+					const bool isQuiet = order < 50;
+
+					if (isQuiet) quietMoveCount++;
+
+					// Extended Futility Pruning: Skip quiet moves
+					if (doFutilityPruning && quietMoveCount > 0) {
+						continue;
+					}
+					
 					const auto next = move.play(pos);
+
 
 					ctx.ply++;
 					if (ctx.ply < MaxSearchDepth) {
 						ctx.repetition[ctx.ply] = next.Hash;
 					}
 
-					moveCount++;
-					if (isQuiet) quietMoveCount++;
-
 					int newDepth = depth - 1;
-					int score;
+					int score = alpha + 1;
 
-					// Late Move Reduction (LMR)
-					if (depth >= 3 && moveCount > (pvNode ? 2 : 1) && !inCheck && isQuiet) {
+					// Late Move Reduction (LMR) - disabled under mate threat or when giving check
+					if (m > 0 && !inCheck && isQuiet && depth >= 3 && beta > -InMateVal) {
 						// LMR formula
-						int reduction = int(log(depth) * log(moveCount) / 3.3);
-						
-						// Anpassungen
-						if (improving) reduction--;
-						if (order > 50) reduction--;
+						int reduction = int(log(depth) * log(m) * 0.3f);
+
 						if (!pvNode) reduction++;
-						
+						if (improving) reduction--;
+												
 						reduction = std::max(0, std::min(reduction, newDepth - 1));
 						
 						// Reduced depth search
 						score = -MiniMaxAB<!white>(ctx, next, newDepth - reduction, -alpha - 1, -alpha);
-						
-						// Re-search if promising
-						if (score > alpha && reduction > 0) {
-							score = -MiniMaxAB<!white>(ctx, next, newDepth, -alpha - 1, -alpha);
-						}
 					}
-					else if (!pvNode || moveCount > 1) {
-						// Principal Variation Search (PVS)
+					else if (m > 0 && !inCheck && beta > -InMateVal) {
 						score = -MiniMaxAB<!white>(ctx, next, newDepth, -alpha - 1, -alpha);
-					}
-					else {
-						// Full window search for first move in PV
-						score = alpha + 1; // Force full search
 					}
 					
 					// Full window re-search if needed
-					if (score > alpha && (moveCount == 1 || score < beta)) {
+					if (score > alpha) {
 						score = -MiniMaxAB<!white>(ctx, next, newDepth, -beta, -alpha);
 					}
 					
@@ -564,19 +576,15 @@ namespace Search {
 										ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
 										ctx.killerMove1[ctx.ply] = mcode;
 									}
-									
-									// History heuristic
-									int bonus = std::min(depth * depth * 16, 2000);
-									historyTable[move.from()][move.to()] += bonus;
 								}
 								
 								break;
 							}
 						}
-					}
 
-					if(alpha > InMateVal) {
-						break;
+						if (alpha > InMateVal) {
+							break;
+						}
 					}
 				}
 
@@ -682,9 +690,54 @@ namespace Search {
 							depth += (i == 0) ? 1 : 2;
 							Gigantua::Board pos = current;
 							searchThreads[i].ctx.repetition[0] = pos.Hash;
+
+							// Initialize aspiration window for this depth iteration
+							if (depth > 3) {
+								searchThreads[i].ctx.aspirationWindow.Reset(currentBestScore);
+							}
+
 							const auto startTime = std::chrono::high_resolution_clock::now();
 
-							const auto score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, -MatVal, MatVal);
+							int score = 0;
+							int alpha = -MatVal;
+							int beta = MatVal;
+
+							// Aspiration window search with retries on fail
+							if (depth > 3) {
+								uint8_t retryCount = 0;
+								const uint8_t maxRetries = 3;
+
+								while (retryCount <= maxRetries) {
+									std::tie(alpha, beta) = searchThreads[i].ctx.aspirationWindow.GetWindow();
+
+									score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, alpha, beta);
+
+									// Check if result fell outside aspiration window
+									if (score <= alpha) {
+										// Fail-low: retry with wider window
+										searchThreads[i].ctx.aspirationWindow.ExpandOnFailLow();
+										retryCount++;
+									}
+									else if (score >= beta) {
+										// Fail-high: retry with wider window
+										searchThreads[i].ctx.aspirationWindow.ExpandOnFailHigh();
+										retryCount++;
+									}
+									else {
+										// Success: result within window
+										break;
+									}
+								}
+
+								// Final full-window search if too many retries
+								if (retryCount > maxRetries) {
+									score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, -MatVal, MatVal);
+								}
+							}
+							else {
+								// Depth <= 3: use full window without aspiration
+								score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, -MatVal, MatVal);
+							}
 
 							const auto stopTime = std::chrono::high_resolution_clock::now();
 							const auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(stopTime - startTime);
