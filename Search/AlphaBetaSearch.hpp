@@ -32,8 +32,8 @@ namespace Search {
 		private:
 			static constexpr int MatVal = 500000;
 			static constexpr int InMateVal = MatVal - MaxSearchDepth;
-			static constexpr int Killer1MoveCost = 600;
-			static constexpr int Killer2MoveCost = 500;
+			static constexpr int Killer1MoveCost = 200;
+			static constexpr int Killer2MoveCost = 100;
 
 			Search::TTable tTable;
 
@@ -259,7 +259,7 @@ namespace Search {
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply >= 2);
+						collector.order[i] = SimpleSort(pos, mv, qply >= 4);
 					}
 				}
 				else {
@@ -310,6 +310,10 @@ namespace Search {
 						if (score >= beta) {
 							return beta;
 						}
+					}
+
+					if(alpha >= InMateVal) {
+						return alpha;
 					}
 				}
 
@@ -427,7 +431,7 @@ namespace Search {
 					}
 				}
 
-				if(depth > 3 && ttMove == 0) {
+				if(depth > 4 && (ttMove == 0 || nodePtr.IsNull())) {
 					depth--;
 				}
 
@@ -441,12 +445,9 @@ namespace Search {
 					int score = -MiniMaxAB<!white, true>(ctx, nullPos, depth - R, -beta, -beta + 1);
 					
 					ctx.ply--;
-					
-					if (score >= beta) {
-						// Verification search for high depths
-						if (score < InMateVal) {
-							return score;
-						}
+
+					if (score >= beta && score < InMateVal) {
+						return score;
 					}
 				}
 
@@ -524,9 +525,13 @@ namespace Search {
 					if (doFutilityPruning && quietMoveCount > 0) {
 						continue;
 					}
+
+					// Late move pruning (LMP)
+					if (depth <= 4 && !inCheck && !pvNode && order == 0 && m > 8 + 2 * depth * depth) {
+						break;
+					}
 					
 					const auto next = move.play(pos);
-
 
 					ctx.ply++;
 					if (ctx.ply < MaxSearchDepth) {
