@@ -104,33 +104,34 @@ namespace Search {
 
 			// Search context per thread
 			struct SearchCtx {
-				uint8_t ply = 0;
-				PvTable pvTable;
-				std::array<uint16_t, MaxSearchDepth> killerMove1 = {};
-				std::array<uint16_t, MaxSearchDepth> killerMove2 = {};
-				std::array<uint64_t, MaxSearchDepth> repetition = {};
-				std::array<int, MaxSearchDepth> staticEval = {};
-				std::vector<MoveCollector<true>> moveCollectorsWhite = std::vector<MoveCollector<true>>(MaxSearchDepth);
-				std::vector<MoveCollector<false>> moveCollectorsBlack = std::vector<MoveCollector<false>>(MaxSearchDepth);
-				uint64_t nodes = 0;
-				AspirationWindow aspirationWindow;
+	uint8_t ply = 0;
+	PvTable pvTable;
+	std::array<uint16_t, MaxSearchDepth> killerMove1 = {};
+	std::array<uint16_t, MaxSearchDepth> killerMove2 = {};
+	std::array<uint64_t, MaxSearchDepth> repetition = {};
+	std::array<int, MaxSearchDepth> staticEval = {};
+	std::array<MoveCollector<true>, MaxSearchDepth> moveCollectorsWhite = {};
+	std::array<MoveCollector<false>, MaxSearchDepth> moveCollectorsBlack = {};
+	uint64_t nodes = 0;
+	AspirationWindow aspirationWindow;
 
-				template<bool white>
-				MoveCollector<white>& GetMoveCollector() {
-					if constexpr (white) return moveCollectorsWhite[ply];
-					else return moveCollectorsBlack[ply];
-				}
+	template<bool white>
+	MoveCollector<white>& GetMoveCollector() {
+		if constexpr (white) return moveCollectorsWhite[ply];
+		else return moveCollectorsBlack[ply];
+	}
 
-				void Clear() {
-					ply = 0;
-					pvTable.Clear();
-					killerMove1.fill(0);
-					killerMove2.fill(0);
-					repetition.fill(0);
-					staticEval.fill(0);
-					nodes = 0;
-				}
-			};
+	void Clear() {
+		ply = 0;
+		pvTable.Clear();
+		killerMove1.fill(0);
+		killerMove2.fill(0);
+		repetition.fill(0);
+		staticEval.fill(0);
+		nodes = 0;
+		aspirationWindow.Reset(0);
+	}
+};
 
 			struct SearchThread {
 				~SearchThread() {

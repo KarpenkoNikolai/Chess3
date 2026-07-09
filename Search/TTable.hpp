@@ -88,38 +88,40 @@ namespace Search {
 
 		int Get(const Gigantua::Board& brd, int alpha, int beta, uint8_t depth, uint16_t& bestMove, uint8_t& ttDepth, Flag& ttFlag) const {
 			Bucket& bucket = hashTable[brd.Hash % HashTableSize];
+
 			for (size_t i = 0; i < BucketSize; i++) {
 				Node& node = bucket[i];
 				const uint64_t testKey = brd.Hash ^ node.smpData;
-				if (testKey == node.smpKey && node.brd == brd) {
-					bestMove = node.ExtractMove();
-					ttDepth = node.ExtractDepth();
-					ttFlag = node.ExtractFlag();
 
-					if (node.ExtractDepth() >= depth) {
-						int score = node.ExtractScore();
+				if (testKey != node.smpKey || !(node.brd == brd)) {
+					continue;
+				}
 
-						switch (node.ExtractFlag()) {
-						case Flag::Value:
-							return score;
-						case Flag::Alpha:
-						{
-							if (score <= alpha) return alpha;
-							break;
-						}
-						case Flag::Beta:
-						{
-							if (score >= beta) return beta;
-							break;
-						}
-						default:
-							break;
-						}
+				bestMove = node.ExtractMove();
+				ttDepth = node.ExtractDepth();
+				ttFlag = node.ExtractFlag();
+
+				if (node.ExtractDepth() >= depth) {
+					const int score = node.ExtractScore();
+
+					switch (node.ExtractFlag()) {
+					case Flag::Value:
+						return score;
+
+					case Flag::Alpha:
+						if (score <= alpha) return alpha;
+						break;
+
+					case Flag::Beta:
+						if (score >= beta) return beta;
+						break;
+
+					default:
+						break;
 					}
 				}
-				break;
 			}
-			
+
 			return NAN_VAL;
 		}
 
