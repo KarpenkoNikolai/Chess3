@@ -28,15 +28,11 @@ namespace Ant {
 		private:
 			static constexpr size_t MaxRnd = 200000;
 			size_t CurrRnd = 0;
-			std::vector<float> RndNums;
+			std::array<float, MaxRnd> RndNums{};
 
-			float getRnd() {
-				size_t n = CurrRnd++;
-				if (n >= MaxRnd) {
-					n = 0;
-					CurrRnd = 0;
-				}
-
+			float getRnd() noexcept {
+				const size_t n = CurrRnd;
+				CurrRnd = (CurrRnd + 1) % MaxRnd;
 				return RndNums[n];
 			}
 
@@ -48,7 +44,6 @@ namespace Ant {
 				std::default_random_engine generator(seed);
 				std::uniform_real_distribution distrib;
 
-				RndNums.resize(MaxRnd);
 				for (size_t i = 0; i < MaxRnd; i++) RndNums[i] = float(distrib(generator));
 			}
 
@@ -117,7 +112,7 @@ namespace Ant {
 
 		enum class AntStepResult
 		{
-			Sucess,
+			Success,
 			inLoop,
 			isMate,
 			isPat,
@@ -255,7 +250,7 @@ namespace Ant {
 				return AntStepResult::EndPath;
 			}
 
-			return AntStepResult::Sucess;
+			return AntStepResult::Success;
 		}
 
 		template <bool white>
@@ -269,13 +264,13 @@ namespace Ant {
 				// first move: this is "my" move when RunAnt<white> and DoStep<white, true>
 				{
 					stepResult = DoStep<white>(ctx, maxAnt, abAnt, position, ply, repetition);
-					if (stepResult != AntStepResult::Sucess) break;
+					if (stepResult != AntStepResult::Success) break;
 				}
 
 				// second move: opponent move
 				{
 					stepResult = DoStep<!white>(ctx, maxAnt, abAnt, position, ply, repetition);
-					if (stepResult != AntStepResult::Sucess) break;
+					if (stepResult != AntStepResult::Success) break;
 				}
 			}// while path
 
@@ -622,6 +617,6 @@ namespace Ant {
 	};
 
 }//namespace Ant
-}//namespace Serch
+}//namespace Search
 
 

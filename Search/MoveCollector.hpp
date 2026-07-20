@@ -5,6 +5,7 @@
 namespace Search {
 
 	static constexpr uint8_t MaxMovesInPosition = 0xff;
+	static constexpr std::array<int32_t, 7> MaterialCost = { 136, 782, 830, 1289, 2529, 0, 0 };
 
 	template<bool white>
 	class MoveCollector : public Gigantua::MoveList::MoveCollectorBase<MoveCollector<white>, white>
@@ -83,12 +84,10 @@ namespace Search {
 		}
 	};
 
-	static constexpr std::array<int32_t, 7> capOrder = { 136, 782, 830, 1289, 2529, 0, 0 };
-
 	template<bool white>
 	static int32_t SimpleSort(const Gigantua::Board& pos, const Gigantua::Board::Move<white> move, bool onlyCap = false)
 	{
-		int32_t result = capOrder[int(move.captured(pos))];
+		int32_t result = MaterialCost[int(move.captured(pos))];
 
 		if (result) {
 			if (move.who(pos) == Gigantua::BoardPiece::Pawn) result += 5;

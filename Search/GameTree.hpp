@@ -10,7 +10,7 @@ namespace Search {
 
 
 	struct GameTree {
-		static constexpr uint8_t BucketSize = 32;
+		static constexpr uint8_t BucketSize = 16;
 		const size_t HashTableSize;
 
 		struct Edge {
@@ -59,10 +59,10 @@ namespace Search {
 				if (entries == 0) return 40000.0f;
 
 				if constexpr (white) {
-					return (sugar + 1.0f) / (toxin + 20 * entries);
+					return (sugar + 1.0f) / (toxin + 30 * entries);
 				}
 				else {
-					return (toxin + 1.0f) / (sugar + 20 * entries);
+					return (toxin + 1.0f) / (sugar + 30 * entries);
 				}
 			}
 		};
@@ -78,8 +78,8 @@ namespace Search {
 			}
 
 			void Set(const uint16_t* moves, const uint8_t* index, uint8_t size) {
-				if (size > 64) {
-					size = 64;
+				if (size > m_data.size()) {
+					m_data.resize(size);
 				}
 				m_dataSize = size;
 				for (uint8_t i = 0; i < size; i++) m_data[i].Reset(moves[index[i]]);

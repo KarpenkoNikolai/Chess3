@@ -22,6 +22,31 @@ namespace Search {
 
 		static constexpr uint8_t MaxSearchDepth = 64;
 
+		// LMR Lookup Table: Pre-computed Late Move Reduction values
+		// Helper function to initialize LMR table at compile time
+		static consteval std::array<std::array<int, 64>, 64> GenerateLMRTable() {
+			std::array<std::array<int, 64>, 64> table = {};
+			
+			for (int d = 0; d < 64; d++) {
+				for (int m = 0; m < 64; m++) {
+					// Original formula: int(log(depth) * log(m) * 0.3f)
+					// Using logarithm approximation for compile-time evaluation
+					int logDepth = 0, logMove = 0;
+					int d_tmp = d, m_tmp = m;
+						
+					// Bit-length based logarithm approximation
+					while (d_tmp > 1) { logDepth++; d_tmp >>= 1; }
+					while (m_tmp > 1) { logMove++; m_tmp >>= 1; }
+						
+					table[d][m] = (logDepth * logMove * 3) / 10;
+				}
+			}
+			return table;
+		}
+
+		// LMRTable[depth][moveNumber] = reduction in half-plies
+		static constexpr std::array<std::array<int, 64>, 64> LMRTable = GenerateLMRTable();
+
 		struct Line {
 			uint8_t size = 0;
 			std::array<uint16_t, MaxSearchDepth> line;
@@ -35,7 +60,14 @@ namespace Search {
 			static constexpr int Killer1MoveCost = 200;
 			static constexpr int Killer2MoveCost = 100;
 
+			// Strategic Pruning Configuration
+			static constexpr int DefaultContemptFactor = 0;
+			static constexpr int ContemptAgainstWeaker = 50;
+
 			Search::TTable tTable;
+
+			// Contempt handling: prefer draws/non-draws based on context
+			int contemptFactor = DefaultContemptFactor;
 
 			struct PvLine {
 				uint8_t size = 0;
@@ -112,8 +144,8 @@ namespace Search {
 	std::array<int, MaxSearchDepth> staticEval = {};
 	std::array<MoveCollector<true>, MaxSearchDepth> moveCollectorsWhite = {};
 	std::array<MoveCollector<false>, MaxSearchDepth> moveCollectorsBlack = {};
+	std::array<bool, MaxSearchDepth> singularExtension = {};
 	uint64_t nodes = 0;
-	AspirationWindow aspirationWindow;
 
 	template<bool white>
 	MoveCollector<white>& GetMoveCollector() {
@@ -128,8 +160,8 @@ namespace Search {
 		killerMove2.fill(0);
 		repetition.fill(0);
 		staticEval.fill(0);
+		singularExtension.fill(false);
 		nodes = 0;
-		aspirationWindow.Reset(0);
 	}
 };
 
@@ -221,6 +253,81 @@ namespace Search {
 				return totalPieces <= 10;
 			}
 
+			// Berechnet Material-Balance: positiv = Weiß besser
+			template<bool white>
+			static int ComputeMaterialBalance(const Gigantua::Board& brd) {
+				constexpr int pawnVal = MaterialCost[0];
+				constexpr int knightVal = MaterialCost[1];
+				constexpr int bishopVal = MaterialCost[2];
+				constexpr int rookVal = MaterialCost[3];
+				constexpr int queenVal = MaterialCost[4];
+
+				int whiteScore = 
+					Bitcount(brd.WPawn) * pawnVal +
+					Bitcount(brd.WKnight) * knightVal +
+					Bitcount(brd.WBishop) * bishopVal +
+					Bitcount(brd.WRook) * rookVal +
+					Bitcount(brd.WQueen) * queenVal;
+
+				int blackScore = 
+					Bitcount(brd.BPawn) * pawnVal +
+					Bitcount(brd.BKnight) * knightVal +
+					Bitcount(brd.BBishop) * bishopVal +
+					Bitcount(brd.BRook) * rookVal +
+					Bitcount(brd.BQueen) * queenVal;
+
+				return white ? (whiteScore - blackScore) : (blackScore - whiteScore);
+			}
+
+			// Dynamische Futility-Margin basierend auf Position
+			template<bool white>
+			int GetAdaptiveFutilityMargin(int depth, bool improving, 
+										  const Gigantua::Board& brd) const {
+				static constexpr int BaseFutilityMargins[8] = 
+				{0, 200, 350, 600, 900, 1100, 1600, 2200};
+				
+				int margin = BaseFutilityMargins[std::min(depth, 7)];
+				
+				// Modifier: Material-Ungleichgewicht
+				int materialDiff = ComputeMaterialBalance<white>(brd);
+				// Skaliert: bei -2000 bis +2000 Differenz
+				margin += std::clamp(materialDiff / 100, -200, 200);
+				
+				// Improving Position → höhere Schwelle für Pruning
+				if (improving) margin += 100;
+				
+				return margin;
+			}
+
+			// Contempt Factor für Draw-Handling
+			int ComputeContemptFactor(bool whiteToMove) const {
+				// Kann später für Opponentenmodellierung erweitert werden
+				// Momentan: neutraler Contempt
+				return contemptFactor;
+			}
+
+			// Singular Extension Detection
+			// Returns true if the TT-move is singular (significantly better than other moves)
+			template<bool white>
+			bool IsSingularMove(SearchCtx& ctx, const Gigantua::Board& pos,
+				uint16_t ttMove, int ttValue, int8_t depth) {
+				if (depth < 8) return false;
+
+				// Adaptive Fenster
+				int margin = (depth < 12) ? depth : 12;  // Cap bei 12
+				int seAlpha = ttValue - margin;
+				int seBeta = ttValue - margin + 1;
+
+				int seScore = MiniMaxAB<white>(ctx, pos, depth - 3, seAlpha, seBeta);
+
+				// Multi-Cut: auch wenn unter Alpha, aber knapp drüber
+				if (seScore > seAlpha && seScore < ttValue - 1) {
+					return false;  // Nicht eindeutig
+				}
+
+				return seScore <= seAlpha;
+			}
+
 			template<bool white>
 			int QuiescenceSearch(SearchCtx& ctx, const Gigantua::Board& pos, int alpha, int beta, int qply = 0) {
 				ctx.nodes++;
@@ -243,8 +350,8 @@ namespace Search {
 					stand_pat = Evaluate(pos);
 					if (stand_pat >= beta) return beta;
 
-					// Delta pruning: wenn selbst mit bester Figur nicht Alpha erreicht wird
-					const int bigDelta = 2700;
+					// Adaptive Delta pruning basierend auf Endgame
+					const int bigDelta = isEndgame(pos) ? 1500 : 2700;
 					if (stand_pat + bigDelta < alpha) {
 						return alpha;
 					}
@@ -260,7 +367,7 @@ namespace Search {
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply >= 4);
+						collector.order[i] = SimpleSort(pos, mv, qply >= 2);
 					}
 				}
 				else {
@@ -287,9 +394,8 @@ namespace Search {
 
 					// SEE pruning in Quiescence
 					if (isCapture && !inCheck) {
-						const int staticGain = order;
-						if ((stand_pat + staticGain + 700) <= alpha) {
-							continue;
+						if ((stand_pat + order + 700) <= alpha) {
+							break;
 						}
 					}
 
@@ -311,10 +417,6 @@ namespace Search {
 						if (score >= beta) {
 							return beta;
 						}
-					}
-
-					if(alpha >= InMateVal) {
-						return alpha;
 					}
 				}
 
@@ -425,21 +527,20 @@ namespace Search {
 				}
 
 				// Reverse Futility Pruning (Static Null Move Pruning)
-				if (!pvNode && !inCheck && depth <= 10 && !isNull && !rootNode && beta > -InMateVal) {
-					int margin = 250 - (improving ? 100 : 0);
+				if (!pvNode && !inCheck && depth <= 8 && !isNull && !rootNode && beta > -InMateVal) {
+					int margin = 200 + (improving ? 100 : 0);
 					if (staticEval - margin * depth >= beta) {
 						return staticEval;
 					}
 				}
 
-				if(depth > 4 && (ttMove == 0 || nodePtr.IsNull())) {
+				if(!inCheck && depth > 4 && ttMove == 0) {
 					depth--;
 				}
 
-
 				// Null Move Pruning (skip if under mate threat)
 				if (!inCheck && !pvNode && !isNull && !rootNode && depth >= 4 && beta > -InMateVal && staticEval >= beta) {
-					int R = 1 + depth / 3;
+					int R = 2 + depth / 4;
 					
 					ctx.ply++;
 					const auto nullPos = pos.SkipMove();
@@ -447,19 +548,32 @@ namespace Search {
 					
 					ctx.ply--;
 
-					if (score >= beta && score < InMateVal) {
+					if (score > beta && score < InMateVal) {
 						return score;
 					}
 				}
 
-				// Extended Futility Pruning: Skip quiet moves if position is hopeless (not under mate threat)
+				// ===== SINGULAR EXTENSIONS =====
+				bool doSingularExtension = false;
+				if (!rootNode && !isNull && depth >= 6 && ttMove != 0 && ttCost != TTable::NAN_VAL && 
+				    ttDepth >= depth - 3 && ttFlag != TTable::Flag::Alpha)
+				{
+					// Check if TT-move is singular
+					if (IsSingularMove<white>(ctx, pos, ttMove, ScoreToTT(ttCost, ctx.ply), depth)) {
+						doSingularExtension = true;
+						ctx.singularExtension[ctx.ply] = true;
+						depth++;  // Extend by one half-ply
+					}
+				}
+
+				// ===== STRATEGIC FUTILITY PRUNING =====
+				// Adaptive Futility Margins mit Material-Awareness
 				bool doFutilityPruning = false;
 				if (!pvNode && !inCheck && depth <= 7 && alpha < InMateVal) {
-					
-					// Depth-dependent futility margins
-					static constexpr int FutilityMargins[8] = {0, 200, 350, 500, 700, 950, 1250, 1600};
-					if(staticEval + FutilityMargins[depth] + (improving ? 100 : 0) <= alpha)
+					int adaptiveMargin = GetAdaptiveFutilityMargin<white>(depth, improving, pos);
+					if (staticEval + adaptiveMargin <= alpha) {
 						doFutilityPruning = true;
+					}
 				}
 
 				// Move ordering
@@ -528,7 +642,7 @@ namespace Search {
 					}
 
 					// Late move pruning (LMP)
-					if (depth <= 4 && !inCheck && !pvNode && order == 0 && m > 8 + 2 * depth * depth) {
+					if (depth <= 4 && !inCheck && !pvNode && order == 0 && quietMoveCount > 8 * depth) {
 						break;
 					}
 					
@@ -542,13 +656,17 @@ namespace Search {
 					int newDepth = depth - 1;
 					int score = alpha + 1;
 
+					// ===== SINGULAR MOVE EXTENSION =====
+					// Don't reduce moves marked as singular
+					bool isSingularMove = (mcode == ttMove && ctx.singularExtension[ctx.ply - 1]);
+
 					// Late Move Reduction (LMR) - disabled under mate threat or when giving check
-					if (m > 0 && !inCheck && isQuiet && depth >= 3 && beta > -InMateVal) {
-						// LMR formula
-						int reduction = int(log(depth) * log(m) * 0.3f);
+					if (abs(staticEval) < 2000 && m > 0 && !inCheck && depth >= 3 && beta > -InMateVal && !isSingularMove) {
+						int reduction = LMRTable[depth][m < 64 ? m : 64];
 
 						if (!pvNode) reduction++;
 						if (improving) reduction--;
+						if (!isQuiet) reduction--;
 												
 						reduction = std::max(0, std::min(reduction, newDepth - 1));
 						
@@ -575,6 +693,7 @@ namespace Search {
 							ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
 						
 							if (alpha >= beta) {
+
 								// Beta cutoff - update heuristics
 								if (isQuiet) {
 									// Killer moves
@@ -586,10 +705,6 @@ namespace Search {
 								
 								break;
 							}
-						}
-
-						if (alpha > InMateVal) {
-							break;
 						}
 					}
 				}
@@ -623,6 +738,10 @@ namespace Search {
 			void SetAntTree(const GameTree* treePtr)
 			{
 				antTreePtr = treePtr;
+			}
+
+			void SetContemptFactor(int factor) {
+				contemptFactor = std::clamp(factor, -200, 200);
 			}
 
 			template<bool white> int Search(const Gigantua::Board& current, uint8_t depth, uint16_t& bestMove)
@@ -697,53 +816,13 @@ namespace Search {
 							Gigantua::Board pos = current;
 							searchThreads[i].ctx.repetition[0] = pos.Hash;
 
-							// Initialize aspiration window for this depth iteration
-							if (depth > 3) {
-								searchThreads[i].ctx.aspirationWindow.Reset(currentBestScore);
-							}
-
 							const auto startTime = std::chrono::high_resolution_clock::now();
 
 							int score = 0;
 							int alpha = -MatVal;
 							int beta = MatVal;
 
-							// Aspiration window search with retries on fail
-							if (depth > 3) {
-								uint8_t retryCount = 0;
-								const uint8_t maxRetries = 3;
-
-								while (retryCount <= maxRetries) {
-									std::tie(alpha, beta) = searchThreads[i].ctx.aspirationWindow.GetWindow();
-
-									score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, alpha, beta);
-
-									// Check if result fell outside aspiration window
-									if (score <= alpha) {
-										// Fail-low: retry with wider window
-										searchThreads[i].ctx.aspirationWindow.ExpandOnFailLow();
-										retryCount++;
-									}
-									else if (score >= beta) {
-										// Fail-high: retry with wider window
-										searchThreads[i].ctx.aspirationWindow.ExpandOnFailHigh();
-										retryCount++;
-									}
-									else {
-										// Success: result within window
-										break;
-									}
-								}
-
-								// Final full-window search if too many retries
-								if (retryCount > maxRetries) {
-									score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, -MatVal, MatVal);
-								}
-							}
-							else {
-								// Depth <= 3: use full window without aspiration
-								score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, -MatVal, MatVal);
-							}
+							score = MiniMaxAB<white>(searchThreads[i].ctx, pos, depth, -MatVal, MatVal);
 
 							const auto stopTime = std::chrono::high_resolution_clock::now();
 							const auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(stopTime - startTime);
@@ -797,6 +876,7 @@ namespace Search {
 			PvLine GetBestLine() const { return currentBestLine; }
 			uint16_t BestMove() const { return currentBestMove; }
 			int BestScore() const { return currentBestScore; }
+
 		};
 
 	}//namespace AlphaBeta
