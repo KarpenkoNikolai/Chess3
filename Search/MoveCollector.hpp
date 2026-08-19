@@ -103,7 +103,7 @@ namespace Search {
 		const auto next = move.play(pos);
 		if (Gigantua::MoveList::InCheck<!white>(next)) {
 			result += 10000;
-			if (Gigantua::MoveList::MovesCount<!white>(next) == 0) result += 100000;
+			if (Gigantua::MoveList::MovesCount<!white>(next) == 0) result += 2000000;
 		}
 
 		if (result)
