@@ -57,17 +57,10 @@ namespace Search {
 		private:
 			static constexpr int MatVal = 500000;
 			static constexpr int InMateVal = MatVal - MaxSearchDepth;
-			static constexpr int Killer1MoveCost = 200;
-			static constexpr int Killer2MoveCost = 100;
-
-			// Strategic Pruning Configuration
-			static constexpr int DefaultContemptFactor = 0;
-			static constexpr int ContemptAgainstWeaker = 50;
+			static constexpr int Killer1MoveCost = 150;
+			static constexpr int Killer2MoveCost = 110;
 
 			Search::TTable tTable;
-
-			// Contempt handling: prefer draws/non-draws based on context
-			int contemptFactor = DefaultContemptFactor;
 
 			struct PvLine {
 				uint8_t size = 0;
@@ -102,35 +95,33 @@ namespace Search {
 			};
 
 // Search context per thread
-struct SearchCtx {
-	uint8_t ply = 0;
-	PvTable pvTable;
-	std::array<uint16_t, MaxSearchDepth> killerMove1 = {};
-	std::array<uint16_t, MaxSearchDepth> killerMove2 = {};
-	std::array<uint64_t, MaxSearchDepth> repetition = {};
-	std::array<int, MaxSearchDepth> staticEval = {};
-	std::array<MoveCollector<true>, MaxSearchDepth> moveCollectorsWhite = {};
-	std::array<MoveCollector<false>, MaxSearchDepth> moveCollectorsBlack = {};
-	std::array<bool, MaxSearchDepth> singularExtension = {};
-	uint64_t nodes = 0;
+			struct SearchCtx {
+				uint8_t ply = 0;
+				PvTable pvTable;
+				std::array<uint16_t, MaxSearchDepth> killerMove1 = {};
+				std::array<uint16_t, MaxSearchDepth> killerMove2 = {};
+				std::array<uint64_t, MaxSearchDepth> repetition = {};
+				std::array<int, MaxSearchDepth> staticEval = {};
+				std::array<MoveCollector<true>, MaxSearchDepth> moveCollectorsWhite = {};
+				std::array<MoveCollector<false>, MaxSearchDepth> moveCollectorsBlack = {};
+				std::array<bool, MaxSearchDepth> singularExtension = {};
 
-	template<bool white>
-	MoveCollector<white>& GetMoveCollector() {
-		if constexpr (white) return moveCollectorsWhite[ply];
-		else return moveCollectorsBlack[ply];
-	}
+				template<bool white>
+				MoveCollector<white>& GetMoveCollector() {
+					if constexpr (white) return moveCollectorsWhite[ply];
+					else return moveCollectorsBlack[ply];
+				}
 
-	void Clear() {
-		ply = 0;
-		pvTable.Clear();
-		killerMove1.fill(0);
-		killerMove2.fill(0);
-		repetition.fill(0);
-		staticEval.fill(0);
-		singularExtension.fill(false);
-		nodes = 0;
-	}
-};
+				void Clear() {
+					ply = 0;
+					pvTable.Clear();
+					killerMove1.fill(0);
+					killerMove2.fill(0);
+					repetition.fill(0);
+					staticEval.fill(0);
+					singularExtension.fill(false);
+				}
+			};
 
 			struct SearchThread {
 				~SearchThread() {
@@ -289,9 +280,8 @@ struct SearchCtx {
 			}
 
 			template<bool white>
-			int QuiescenceSearch(SearchCtx& ctx, const Gigantua::Board& pos, int alpha, int beta, int qply = 0) {
-				ctx.nodes++;
-				
+			int QuiescenceSearch(SearchCtx& ctx, const Gigantua::Board& pos, int alpha, int beta, int qply = 0)
+			{	
 				if (ctx.ply >= MaxSearchDepth) return 0;
 				if (isDraw(pos)) return 0;
 
@@ -320,13 +310,13 @@ struct SearchCtx {
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply >= 4);
+						collector.order[i] = SimpleSort(pos, mv, qply > 5);
 					}
 				}
 				else {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = 10000 + SimpleSort(pos, mv, false);
+						collector.order[i] = 10000 + SimpleSort(pos, mv);
 					}
 				}
 
@@ -341,10 +331,6 @@ struct SearchCtx {
 
 					const bool isCapture = order < 9000 && order > 100;
 
-					if (!inCheck && !isCapture) {
-						qply++;
-					}
-
 					// SEE pruning in Quiescence
 					if (isCapture && !inCheck) {
 						if ((stand_pat + order + 500) <= alpha) {
@@ -358,6 +344,10 @@ struct SearchCtx {
 					ctx.ply++;
 					if (ctx.ply < MaxSearchDepth) {
 						ctx.repetition[ctx.ply] = next.Hash;
+					}
+
+					if (!isCapture && !inCheck) {
+						qply++;
 					}
 
 					int score = -QuiescenceSearch<!white>(ctx, next, -beta, -alpha, qply);
@@ -385,8 +375,6 @@ struct SearchCtx {
 				const Gigantua::Board& pos,
 				int8_t depth, int alpha, int beta)
 			{
-				ctx.nodes++;
-				
 				if (ctx.ply >= MaxSearchDepth)
 					return 0;
 
@@ -442,7 +430,7 @@ struct SearchCtx {
 
 				ctx.pvTable.table[ctx.ply].Clear();
 
-				if (!inCheck && !rootNode && ttMove == 0) {
+				if (!inCheck && depth >= 4 && !rootNode && ttMove == 0) {
 					depth--;
 				}
 
@@ -488,7 +476,7 @@ struct SearchCtx {
 				}
 
 				// Reverse Futility Pruning (Static Null Move Pruning)
-				if (!pvNode && !inCheck && depth <= 7 && !isNull && !rootNode && beta > -InMateVal) {
+				if (!pvNode && !inCheck && depth <= 7 && !isNull && !rootNode && beta > -3000 && staticEval < 3000) {
 					int margin = 200 + (improving ? 150 : 0);
 					if (staticEval - margin * depth >= beta) {
 						return staticEval;
@@ -622,7 +610,8 @@ struct SearchCtx {
 
 						if (!pvNode) reduction++;
 						if (improving) reduction--;
-						if (!isQuiet) reduction--;
+						if (isQuiet) reduction++;
+						if (order > 100) reduction = 0;
 												
 						reduction = std::max(0, std::min(reduction, newDepth - 1));
 						
@@ -693,10 +682,6 @@ struct SearchCtx {
 			void SetAntTree(const GameTree* treePtr)
 			{
 				antTreePtr = treePtr;
-			}
-
-			void SetContemptFactor(int factor) {
-				contemptFactor = std::clamp(factor, -200, 200);
 			}
 
 			template<bool white> int Search(const Gigantua::Board& current, uint8_t depth, uint16_t& bestMove)

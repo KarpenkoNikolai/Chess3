@@ -105,10 +105,11 @@ namespace Ant {
 		static constexpr float MatVal = 50000.0f;
 
 		Gigantua::Board m_current;
+		float m_currentCost = 0;
 		AlphaBeta::SearchEngine m_abEngine;
 		std::array<uint64_t, 16> history;
-		static constexpr size_t MaxAnt = 64;
-		static constexpr size_t ABAnt = 64;
+		static constexpr size_t MaxAnt = 128;
+		static constexpr size_t ABAnt = 128;
 
 		enum class AntStepResult
 		{
@@ -279,22 +280,17 @@ namespace Ant {
 			}
 
 			float cost = 0;
-			if(stepResult == AntStepResult::isMate) {
+			if(stepResult ==  AntStepResult::isMate) {
 				if (white == position.status.WhiteMove())
 					cost = std::min(-1000.0f, -MatVal + 500 * ply);
 				else
 					cost = std::max(1000.0f, MatVal - 500 * ply);
 			}
 			else {
-
-				if (position.status.WhiteMove() == white && Gigantua::MoveList::InCheck<white>(position))
-					cost = 0;
-				else if (position.status.WhiteMove() != white && Gigantua::MoveList::InCheck<!white>(position))
-					cost = 0;
-				else if (white == position.status.WhiteMove())
-					cost = m_costFunc(position);
+				if (white == position.status.WhiteMove())
+					cost = m_costFunc(position) - m_currentCost;
 				else
-					cost = -m_costFunc(position);
+					cost = -m_costFunc(position) - m_currentCost;
 
 			}
 
@@ -342,6 +338,13 @@ namespace Ant {
 		void Set(const Gigantua::Board& brd) {
 			Stop();
 			m_current = brd;
+			uint16_t m;
+			if (m_current.status.WhiteMove()) {
+				m_currentCost = m_abEngine.Search<true>(brd, 2, m);
+			}
+			else {
+				m_currentCost = m_abEngine.Search<false>(brd, 2, m);
+			}
 		}
 
 		void SetHistory(const std::array<uint64_t, 16>& h) {

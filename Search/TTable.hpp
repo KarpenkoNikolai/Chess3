@@ -20,7 +20,7 @@ namespace Search {
 		static constexpr int NAN_VAL = 0x7fffffff;
 
 		struct Node {
-			Gigantua::Board brd;
+			uint64_t brdHash;
 			uint64_t smpKey = 0ull;
 			uint64_t smpData = NAN_VAL;
 
@@ -79,7 +79,7 @@ namespace Search {
 			for(size_t i = 0; i < BucketSize; i++) {
 				const Node& node = bucket[i];
 				const uint64_t testKey = brd.Hash ^ node.smpData;
-				if (testKey == node.smpKey && node.ExtractFlag() == Flag::Value && node.brd == brd) {
+				if (testKey == node.smpKey && node.ExtractFlag() == Flag::Value && node.brdHash == brd.Hash) {
 					return node.ExtractMove();
 				}
 			}
@@ -93,7 +93,7 @@ namespace Search {
 				Node& node = bucket[i];
 				const uint64_t testKey = brd.Hash ^ node.smpData;
 
-				if (testKey != node.smpKey || !(node.brd == brd)) {
+				if (testKey != node.smpKey || !(node.brdHash == brd.Hash)) {
 					continue;
 				}
 
@@ -103,17 +103,16 @@ namespace Search {
 
 				if (node.ExtractDepth() >= depth) {
 					const int score = node.ExtractScore();
-
 					switch (node.ExtractFlag()) {
 					case Flag::Value:
 						return score;
 
 					case Flag::Alpha:
-						if (score <= alpha) return alpha;
+						if (score <= alpha) return score;
 						break;
 
 					case Flag::Beta:
-						if (score >= beta) return beta;
+						if (score >= beta) return score;
 						break;
 
 					default:
@@ -135,7 +134,7 @@ namespace Search {
 				Node& node = bucket[i];
 
 				if (node.smpKey != 0) {
-					if (node.brd == brd && node.ExtractDepth() > depth)
+					if (node.brdHash == brd.Hash && node.ExtractDepth() > depth)
 						return;
 				}
 
@@ -150,7 +149,7 @@ namespace Search {
 				}
 			}
 
-			bucket[minIndex].brd = brd;
+			bucket[minIndex].brdHash = brd.Hash;
 			bucket[minIndex].smpData = Node::PackData(cost, bestMove, depth, flag);
 			bucket[minIndex].smpKey = brd.Hash ^ bucket[minIndex].smpData;
 		}
