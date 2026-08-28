@@ -280,7 +280,7 @@ namespace Search {
 			}
 
 			template<bool white>
-			int QuiescenceSearch(SearchCtx& ctx, const Gigantua::Board& pos, int alpha, int beta, int qply = 0)
+			int QuiescenceSearch(SearchCtx& ctx, const Gigantua::Board& pos, int alpha, int beta)
 			{	
 				if (ctx.ply >= MaxSearchDepth) return 0;
 				if (isDraw(pos)) return 0;
@@ -310,7 +310,7 @@ namespace Search {
 				if (!inCheck) {
 					for (uint8_t i = 0; i < collector.size; i++) {
 						const Gigantua::Board::Move<white> mv(collector.moves[i]);
-						collector.order[i] = SimpleSort(pos, mv, qply > 5);
+						collector.order[i] = SimpleSort(pos, mv, true);
 					}
 				}
 				else {
@@ -326,17 +326,8 @@ namespace Search {
 					collector.SortMoves(i);
 					const int order = collector.order[collector.index[i]];
 
-					if (order < 50)
+					if (order == 0)
 						break;
-
-					const bool isCapture = order < 9000 && order > 100;
-
-					// SEE pruning in Quiescence
-					if (isCapture && !inCheck) {
-						if ((stand_pat + order + 500) <= alpha) {
-							break;
-						}
-					}
 
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[i]]);
 					const auto next = move.play(pos);
@@ -346,20 +337,16 @@ namespace Search {
 						ctx.repetition[ctx.ply] = next.Hash;
 					}
 
-					if (!isCapture && !inCheck) {
-						qply++;
-					}
-
-					int score = -QuiescenceSearch<!white>(ctx, next, -beta, -alpha, qply);
+					int score = -QuiescenceSearch<!white>(ctx, next, -beta, -alpha);
 
 					ctx.ply--;
 
 					if (score > alpha) {
 						alpha = score;
+					}
 
-						if (score >= beta) {
-							return beta;
-						}
+					if (alpha >= beta) {
+						break;
 					}
 				}
 
@@ -379,6 +366,10 @@ namespace Search {
 					return 0;
 
 				if (depth < 0) depth = 0;
+
+				if (depth < 1) {
+					return QuiescenceSearch<white>(ctx, pos, alpha, beta);
+				}
 
 				const bool rootNode = (ctx.ply == 0);
 				const bool pvNode = (beta - alpha) > 1;
@@ -430,12 +421,8 @@ namespace Search {
 
 				ctx.pvTable.table[ctx.ply].Clear();
 
-				if (!inCheck && depth >= 4 && !rootNode && ttMove == 0) {
+				if (!inCheck && ttDepth >= 4 && !rootNode && ttMove == 0) {
 					depth--;
-				}
-
-				if (depth < 1 && !inCheck) {
-					return QuiescenceSearch<white>(ctx, pos, alpha, beta);
 				}
 
 				// Static evaluation
@@ -459,7 +446,7 @@ namespace Search {
 					if (ctx.ply >= 2 && !isNull) {
 						improving = staticEval > (ctx.staticEval[ctx.ply - 2] + 30);
 
-						if (!inCheck && depth > 4 && staticEval < (ctx.staticEval[ctx.ply - 2] - 100)) depth--;
+						if (!inCheck && depth > 4 && staticEval < (ctx.staticEval[ctx.ply - 2] - 200)) depth--;
 					}
 				}
 
@@ -475,32 +462,9 @@ namespace Search {
 					return 0;
 				}
 
-				// Reverse Futility Pruning (Static Null Move Pruning)
-				if (!pvNode && !inCheck && depth <= 7 && !isNull && !rootNode && beta > -3000 && staticEval < 3000) {
-					int margin = 200 + (improving ? 150 : 0);
-					if (staticEval - margin * depth >= beta) {
-						return staticEval;
-					}
-				}
-
-				// Null Move Pruning (skip if under mate threat)
-				if (!inCheck && !pvNode && !isNull && !rootNode && depth >= 4 && abs(beta) < InMateVal && staticEval >= beta) {
-					int R = 2 + depth / 4;
-					
-					ctx.ply++;
-					const auto nullPos = pos.SkipMove();
-					int score = -MiniMaxAB<!white, true>(ctx, nullPos, depth - R, -beta, -beta + 1);
-					
-					ctx.ply--;
-
-					if (score > beta && score < InMateVal) {
-						return score;
-					}
-				}
-
 				// ===== SINGULAR EXTENSIONS =====
 				bool doSingularExtension = false;
-				if (!rootNode && !isNull && ttMove != 0 && ttCost != TTable::NAN_VAL &&
+				if (!inCheck && !rootNode && !isNull && ttMove != 0 && ttCost != TTable::NAN_VAL &&
 				    ttDepth >= depth - 3 && ttFlag != TTable::Flag::Alpha)
 				{
 					// Check if TT-move is singular
@@ -511,10 +475,33 @@ namespace Search {
 					}
 				}
 
+				// Reverse Futility Pruning (Static Null Move Pruning)
+				if (!doSingularExtension && !pvNode && !inCheck && depth <= 7 && !isNull && !rootNode && beta > -3000 && staticEval < 3000) {
+					int margin = 200 + (improving ? 150 : 0);
+					if (staticEval - margin * depth >= beta) {
+						return staticEval;
+					}
+				}
+
+				// Null Move Pruning (skip if under mate threat)
+				if (!doSingularExtension && !inCheck && !pvNode && !isNull && !rootNode && depth >= 4 && abs(beta) < InMateVal && staticEval >= beta) {
+					int R = 2 + depth / 4;
+
+					ctx.ply++;
+					const auto nullPos = pos.SkipMove();
+					int score = -MiniMaxAB<!white, true>(ctx, nullPos, depth - R, -beta, -beta + 1);
+
+					ctx.ply--;
+
+					if (score > beta && score < InMateVal) {
+						return score;
+					}
+				}
+
 				// ===== STRATEGIC FUTILITY PRUNING =====
 				// Adaptive Futility Margins mit Material-Awareness
 				bool doFutilityPruning = false;
-				if (!pvNode && !inCheck && depth <= 7 && alpha < InMateVal) {
+				if (!doSingularExtension && !pvNode && !inCheck && depth <= 7 && alpha < InMateVal) {
 					int adaptiveMargin = GetAdaptiveFutilityMargin<white>(depth, improving, pos);
 					if (staticEval + adaptiveMargin <= alpha) {
 						doFutilityPruning = true;
@@ -553,7 +540,7 @@ namespace Search {
 					
 					// Prioritize moves
 					if (mcode == ttMove) order += 10000000;
-					else if (mcode == antMove) order += 1200000;
+					else if (mcode == antMove) order += 2000000;
 					else if (mcode == ctx.killerMove1[ctx.ply]) order += Killer1MoveCost;
 					else if (mcode == ctx.killerMove2[ctx.ply]) order += Killer2MoveCost;
 					
@@ -565,9 +552,7 @@ namespace Search {
 				int quietMoveCount = 0;
 				uint16_t bestMoveFound = 0;
     
-				for (uint8_t m = 0; m < searchSize; m++) {
-					if (!searchStarted) break;
-					
+				for (uint8_t m = 0; m < searchSize; m++) {					
 					collector.SortMoves(m);
 					const auto order = collector.order[collector.index[m]];
 					if (order == 0) collector.SortMovesEntries(m);
@@ -605,16 +590,14 @@ namespace Search {
 					int score = -1000000;
 
 					// Late Move Reduction (LMR) - disabled under mate threat or when giving check
-					if (abs(alpha) < InMateVal && beta > -InMateVal && abs(staticEval) < InMateVal && m > 0 && !inCheck && depth >= 3 && order < 9000 && !isSingularMove) {
+					if (m > 0 && !inCheck && depth > 3 && order < 9000 && !isSingularMove) {
 						int reduction = LMRTable[depth][m < 64 ? m : 63];
 
 						if (!pvNode) reduction++;
-						if (improving) reduction--;
+						if (reduction && improving) reduction--;
 						if (isQuiet) reduction++;
 						if (order > 100) reduction = 0;
-												
-						reduction = std::max(0, std::min(reduction, newDepth - 1));
-						
+																		
 						// Reduced depth search
 						score = -MiniMaxAB<!white>(ctx, next, newDepth - reduction, -alpha - 1, -alpha);
 						if(score > alpha && reduction)
@@ -637,7 +620,6 @@ namespace Search {
 							ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
 						
 							if (alpha >= beta) {
-
 								// Beta cutoff - update heuristics
 								if (isQuiet) {
 									// Killer moves
@@ -651,6 +633,8 @@ namespace Search {
 							}
 						}
 					}
+
+					if (!searchStarted) break;
 				}
 
 				// Store in transposition table
@@ -748,11 +732,11 @@ namespace Search {
 
 				for (size_t i = 0; i < threadsNum; i++) {
 					searchThreads[i].threadPtr.reset(new std::thread([this, current, milliseconds, i, onWin, threadsNum]() {
-						uint8_t depth = i * 2 + 1;
+						uint8_t depth = i;
 						int64_t search_time_ms = milliseconds;
 						
 						while (searchStarted && depth < MaxSearchDepth) {
-							depth += (i == 0) ? 1 : 2;
+							depth += 1;
 							Gigantua::Board pos = current;
 							searchThreads[i].ctx.repetition[0] = pos.Hash;
 

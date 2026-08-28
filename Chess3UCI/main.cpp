@@ -19,7 +19,7 @@ private:
 
 public:
     Bot(std::function<float(const Gigantua::Board&)> costFunc) : board(Gigantua::Board::StartPositionFen())
-        , antEngine(costFunc, 2000000)
+        , antEngine(costFunc, 1000000)
     {
     }
 
@@ -106,7 +106,7 @@ public:
             }
         }
         antEngine.SetHistory(h);
-        antEngine.Start(4, 4, timeMs, onDone);
+        antEngine.Start(2, 6, timeMs, onDone);
 
         std::unique_lock<std::mutex> lock(mtx);
         cv.wait_for(lock, std::chrono::milliseconds(timeMs), [&done] { return done; });

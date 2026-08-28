@@ -103,21 +103,12 @@ namespace Search {
 
 				if (node.ExtractDepth() >= depth) {
 					const int score = node.ExtractScore();
-					switch (node.ExtractFlag()) {
-					case Flag::Value:
+					if (ttFlag == Flag::Value)
 						return score;
-
-					case Flag::Alpha:
-						if (score <= alpha) return score;
-						break;
-
-					case Flag::Beta:
-						if (score >= beta) return score;
-						break;
-
-					default:
-						break;
-					}
+					else if (ttFlag == Flag::Alpha)
+						if (score <= alpha) return alpha;
+					else if (ttFlag == Flag::Beta)
+						if (score >= beta) return beta;
 				}
 			}
 

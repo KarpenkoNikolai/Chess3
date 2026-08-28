@@ -108,8 +108,8 @@ namespace Ant {
 		float m_currentCost = 0;
 		AlphaBeta::SearchEngine m_abEngine;
 		std::array<uint64_t, 16> history;
-		static constexpr size_t MaxAnt = 128;
-		static constexpr size_t ABAnt = 128;
+		static constexpr size_t MaxAnt = 256;
+		static constexpr size_t ABAnt = 256;
 
 		enum class AntStepResult
 		{
