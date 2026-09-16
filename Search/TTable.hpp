@@ -86,7 +86,7 @@ namespace Search {
 			return 0;	
 		}
 
-		int Get(const Gigantua::Board& brd, int alpha, int beta, uint8_t depth, uint16_t& bestMove, uint8_t& ttDepth, Flag& ttFlag) const {
+		int Get(const Gigantua::Board& brd, uint16_t& bestMove, uint8_t& ttDepth, Flag& ttFlag) const {
 			Bucket& bucket = hashTable[brd.Hash % HashTableSize];
 
 			for (size_t i = 0; i < BucketSize; i++) {
@@ -100,16 +100,7 @@ namespace Search {
 				bestMove = node.ExtractMove();
 				ttDepth = node.ExtractDepth();
 				ttFlag = node.ExtractFlag();
-
-				if (node.ExtractDepth() >= depth) {
-					const int score = node.ExtractScore();
-					if (ttFlag == Flag::Value)
-						return score;
-					else if (ttFlag == Flag::Alpha)
-						if (score <= alpha) return alpha;
-					else if (ttFlag == Flag::Beta)
-						if (score >= beta) return beta;
-				}
+				return node.ExtractScore();
 			}
 
 			return NAN_VAL;

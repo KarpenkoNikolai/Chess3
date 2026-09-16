@@ -81,7 +81,7 @@ namespace NN
 		{
 			float nnEval = m_nn.Evaluate(brd);
 			if (abs(nnEval) > 2300) {
-				const float matEval = 2.0f*(EvaluateMaterial(brd) + EvaluateQueenKingMate(brd));
+				const float matEval = (EvaluateMaterial(brd) + EvaluateQueenKingMate(brd));
 				nnEval += brd.status.WhiteMove() ? matEval : -matEval;
 			}
 			

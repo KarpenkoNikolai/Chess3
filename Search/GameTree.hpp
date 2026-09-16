@@ -49,9 +49,6 @@ namespace Search {
 
 			void AddEntries() {
 				entries++;
-
-				sugar *= 0.9999995f;
-				toxin *= 0.9999995f;
 			}
 
 			void MergeEntries(uint32_t e) { entries += e; }
@@ -59,13 +56,13 @@ namespace Search {
 			template <bool white>
 			float getProbability() const
 			{
-				if (entries == 0) return 40.0f;
+				if (entries == 0) return 4000.0f;
 
 				if constexpr (white) {
-					return float(sugar + 1.0) / float(toxin + 150 * entries);
+					return float(sugar + 1.0f) / float(500 * entries);
 				}
 				else {
-					return float(toxin + 1.0) / float(sugar + 150 * entries);
+					return float(toxin + 1.0f) / float(500 * entries);
 				}
 			}
 		};

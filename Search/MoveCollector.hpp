@@ -84,6 +84,52 @@ namespace Search {
 		}
 	};
 
+
+	template<bool white>
+	static bool IsPassedPawnPush(
+		const Gigantua::Board& pos,
+		const Gigantua::Board::Move<white>& move)
+	{
+		using MoveType = Gigantua::MoveType;
+
+		if (move.who(pos) != Gigantua::BoardPiece::Pawn)
+			return false;
+
+		if (move.captured(pos) != Gigantua::BoardPiece::None)
+			return false;
+
+		if (move.type() != MoveType::PawnMove &&
+			move.type() != MoveType::PawnPush)
+			return false;
+
+		const int targetSquare = move.to();
+		const int targetRank = targetSquare / 8;
+		const int targetFile = targetSquare % 8;
+
+		const uint64_t enemyPawns = white ? pos.BPawn : pos.WPawn;
+
+		const int direction = white ? 1 : -1;
+		const int firstRank = targetRank + direction;
+		const int lastRank = white ? 7 : 0;
+
+		for (int rank = firstRank;
+			white ? rank <= lastRank : rank >= lastRank;
+			rank += direction)
+		{
+			for (int file = std::max(0, targetFile - 1);
+				file <= std::min(7, targetFile + 1);
+				++file)
+			{
+				const uint64_t square = 1ull << (rank * 8 + file);
+
+				if (enemyPawns & square)
+					return false;
+			}
+		}
+
+		return true;
+	}
+
 	template<bool white>
 	static int32_t SimpleSort(const Gigantua::Board& pos, const Gigantua::Board::Move<white> move, bool onlyCap = false)
 	{
@@ -142,6 +188,15 @@ namespace Search {
 			if (move.who(pos) == Gigantua::BoardPiece::Knight) result += 2;
 			if (move.who(pos) == Gigantua::BoardPiece::Rook) result += 1;
 			return result;
+		}
+
+		// Passed-pawn push bonus.
+		if (IsPassedPawnPush<white>(pos, move)) {
+			const int rank = move.to() / 8;
+			const int advanceRank = white ? rank : 7 - rank;
+
+			// Der Bonus steigt, je näher der Bauer an der Umwandlung ist.
+			result += 40 + advanceRank * 20;
 		}
 
 		return result;

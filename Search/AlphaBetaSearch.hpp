@@ -57,8 +57,7 @@ namespace Search {
 		private:
 			static constexpr int MatVal = 500000;
 			static constexpr int InMateVal = MatVal - MaxSearchDepth;
-			static constexpr int Killer1MoveCost = 150;
-			static constexpr int Killer2MoveCost = 110;
+			static constexpr int KillerMoveCost = 150;
 
 			Search::TTable tTable;
 
@@ -98,8 +97,7 @@ namespace Search {
 			struct SearchCtx {
 				uint8_t ply = 0;
 				PvTable pvTable;
-				std::array<uint16_t, MaxSearchDepth> killerMove1 = {};
-				std::array<uint16_t, MaxSearchDepth> killerMove2 = {};
+				std::array<uint16_t, MaxSearchDepth> killerMove[4] = {};
 				std::array<uint64_t, MaxSearchDepth> repetition = {};
 				std::array<int, MaxSearchDepth> staticEval = {};
 				std::array<MoveCollector<true>, MaxSearchDepth> moveCollectorsWhite = {};
@@ -115,8 +113,9 @@ namespace Search {
 				void Clear() {
 					ply = 0;
 					pvTable.Clear();
-					killerMove1.fill(0);
-					killerMove2.fill(0);
+					for (uint8_t i = 0; i < 4; i++) {
+						killerMove[i].fill(0);
+					}
 					repetition.fill(0);
 					staticEval.fill(0);
 					singularExtension.fill(false);
@@ -237,26 +236,6 @@ namespace Search {
 				return white ? (whiteScore - blackScore) : (blackScore - whiteScore);
 			}
 
-			// Dynamische Futility-Margin basierend auf Position
-			template<bool white>
-			int GetAdaptiveFutilityMargin(int depth, bool improving, 
-										  const Gigantua::Board& brd) const {
-				static constexpr int BaseFutilityMargins[8] = 
-				{0, 200, 350, 600, 900, 1100, 1600, 2200};
-				
-				int margin = BaseFutilityMargins[std::min(depth, 7)];
-				
-				// Modifier: Material-Ungleichgewicht
-				int materialDiff = ComputeMaterialBalance<white>(brd);
-				// Skaliert: bei -2000 bis +2000 Differenz
-				margin += std::clamp(materialDiff / 100, -200, 200);
-				
-				// Improving Position → höhere Schwelle für Pruning
-				if (improving) margin += 250;
-				
-				return margin;
-			}
-
 			// Singular Extension Detection
 			// Returns true if the TT-move is singular (significantly better than other moves)
 			template<bool white>
@@ -277,6 +256,25 @@ namespace Search {
 				}
 
 				return seScore <= seAlpha;
+			}
+
+			// Dynamische Futility-Margin basierend auf Position
+			template<bool white>
+			int GetAdaptiveFutilityMargin(int depth, bool improving, const Gigantua::Board& brd) const {
+				static constexpr int BaseFutilityMargins[8] =
+				{ 0, 200, 350, 600, 900, 1100, 1600, 2200 };
+
+				int margin = BaseFutilityMargins[std::min(depth, 7)];
+
+				// Modifier: Material-Ungleichgewicht
+				int materialDiff = ComputeMaterialBalance<white>(brd);
+				// Skaliert: bei -2000 bis +2000 Differenz
+				margin += std::clamp(materialDiff / 100, -200, 200);
+
+				// Improving Position → höhere Schwelle für Pruning
+				if (improving) margin += 50;
+
+				return margin;
 			}
 
 			template<bool white>
@@ -343,11 +341,12 @@ namespace Search {
 
 					if (score > alpha) {
 						alpha = score;
+
+						if (alpha >= beta) {
+							break;
+						}
 					}
 
-					if (alpha >= beta) {
-						break;
-					}
 				}
 
 				if (inCheck && collector.size == 0) {
@@ -413,17 +412,22 @@ namespace Search {
 				uint8_t ttDepth = 0;
 				TTable::Flag ttFlag = TTable::Flag::Alpha;
 				if (!rootNode) {
-					ttCost = tTable.Get(pos, alpha, beta, depth, ttMove, ttDepth, ttFlag);
-					if (!pvNode && ttCost != TTable::NAN_VAL) {
-						return ScoreFromTT(ttCost, ctx.ply);
+					ttCost = tTable.Get(pos, ttMove, ttDepth, ttFlag);
+					if (ttCost != TTable::NAN_VAL && ttDepth >= depth && !pvNode) {
+						switch (ttFlag) {
+						case TTable::Flag::Value:
+							return ScoreFromTT(ttCost, ctx.ply);
+						case TTable::Flag::Alpha:
+							if (ttCost <= alpha) return ScoreFromTT(ttCost, ctx.ply);
+							break;
+						case TTable::Flag::Beta:
+							if (ttCost >= beta) return ScoreFromTT(ttCost, ctx.ply);
+							break;
+						}
 					}
 				}
 
 				ctx.pvTable.table[ctx.ply].Clear();
-
-				if (!inCheck && ttDepth >= 4 && !rootNode && ttMove == 0) {
-					depth--;
-				}
 
 				// Static evaluation
 				int staticEval = 0;
@@ -444,9 +448,7 @@ namespace Search {
 					
 					// Improving heuristic
 					if (ctx.ply >= 2 && !isNull) {
-						improving = staticEval > (ctx.staticEval[ctx.ply - 2] + 30);
-
-						if (!inCheck && depth > 4 && staticEval < (ctx.staticEval[ctx.ply - 2] - 200)) depth--;
+						improving = staticEval > (ctx.staticEval[ctx.ply - 2] + 60);
 					}
 				}
 
@@ -475,14 +477,6 @@ namespace Search {
 					}
 				}
 
-				// Reverse Futility Pruning (Static Null Move Pruning)
-				if (!doSingularExtension && !pvNode && !inCheck && depth <= 7 && !isNull && !rootNode && beta > -3000 && staticEval < 3000) {
-					int margin = 200 + (improving ? 150 : 0);
-					if (staticEval - margin * depth >= beta) {
-						return staticEval;
-					}
-				}
-
 				// Null Move Pruning (skip if under mate threat)
 				if (!doSingularExtension && !inCheck && !pvNode && !isNull && !rootNode && depth >= 4 && abs(beta) < InMateVal && staticEval >= beta) {
 					int R = 2 + depth / 4;
@@ -498,12 +492,20 @@ namespace Search {
 					}
 				}
 
+				bool doFutilityPruning = false;
+				// Reverse Futility Pruning (Static Null Move Pruning)
+				if (!doSingularExtension && !pvNode && !inCheck && depth <= 7 && !isNull && !rootNode && beta > -3000 && staticEval < 3000) {
+					int margin = 250 + (improving ? 50 : 0);
+					if (staticEval - margin * depth >= beta) {
+						doFutilityPruning = true;
+					}
+				}
+
 				// ===== STRATEGIC FUTILITY PRUNING =====
 				// Adaptive Futility Margins mit Material-Awareness
-				bool doFutilityPruning = false;
-				if (!doSingularExtension && !pvNode && !inCheck && depth <= 7 && alpha < InMateVal) {
-					int adaptiveMargin = GetAdaptiveFutilityMargin<white>(depth, improving, pos);
-					if (staticEval + adaptiveMargin <= alpha) {
+				if (!doFutilityPruning && !doSingularExtension && !pvNode && !inCheck && depth <= 7 && !isNull && !rootNode && alpha < InMateVal) {
+					int margin = GetAdaptiveFutilityMargin<white>(depth, improving, pos);
+					if (staticEval + margin <= alpha) {
 						doFutilityPruning = true;
 					}
 				}
@@ -539,11 +541,13 @@ namespace Search {
 					int order = SimpleSort(pos, mv);
 					
 					// Prioritize moves
-					if (mcode == ttMove) order += 10000000;
-					else if (mcode == antMove) order += 2000000;
-					else if (mcode == ctx.killerMove1[ctx.ply]) order += Killer1MoveCost;
-					else if (mcode == ctx.killerMove2[ctx.ply]) order += Killer2MoveCost;
-					
+					if (mcode == ttMove) order += 1000000;
+					if (mcode == antMove) order += 200000;
+
+					for (size_t k = 0; k < 4; k++){
+						if (mcode == ctx.killerMove[k][ctx.ply]) order += KillerMoveCost - k;
+					}
+
 					collector.order[i] = order;
 				}
 
@@ -551,7 +555,8 @@ namespace Search {
 				int bestScore = -std::numeric_limits<int>::max();
 				int quietMoveCount = 0;
 				uint16_t bestMoveFound = 0;
-    
+				int cutCount = 0;
+
 				for (uint8_t m = 0; m < searchSize; m++) {					
 					collector.SortMoves(m);
 					const auto order = collector.order[collector.index[m]];
@@ -567,7 +572,7 @@ namespace Search {
 
 					// Extended Futility Pruning: Skip quiet moves
 					if (doFutilityPruning && quietMoveCount > 0) {
-						continue;
+						break;
 					}
 
 					// ===== SINGULAR MOVE EXTENSION =====
@@ -575,7 +580,7 @@ namespace Search {
 					bool isSingularMove = (mcode == ttMove && ctx.singularExtension[ctx.ply - 1]);
 
 					// Late move pruning (LMP)
-					if (!improving && !isSingularMove && depth <= 8 && !inCheck && !pvNode && quietMoveCount > (3 + depth * depth)) {
+					if (!improving && !isSingularMove && depth <= 8 && !inCheck && !pvNode && quietMoveCount > (6 + depth * depth)) {
 						break;
 					}
 
@@ -614,23 +619,25 @@ namespace Search {
 					if (score > bestScore) {
 						bestScore = score;
 						bestMoveFound = mcode;
-						
+
 						if (score > alpha) {
 							alpha = score;
 							ctx.pvTable.table[ctx.ply].Compose(mcode, ctx.pvTable.table[ctx.ply + 1]);
-						
-							if (alpha >= beta) {
-								// Beta cutoff - update heuristics
-								if (isQuiet) {
-									// Killer moves
-									if (ctx.killerMove1[ctx.ply] != mcode) {
-										ctx.killerMove2[ctx.ply] = ctx.killerMove1[ctx.ply];
-										ctx.killerMove1[ctx.ply] = mcode;
+						}
+
+						if (alpha >= beta) {
+							// Beta cutoff - update heuristics
+							if (isQuiet) {
+								// Killer moves
+								if (ctx.killerMove[0][ctx.ply] != mcode) {
+									for(size_t k = 4; k > 0; k--) {
+										ctx.killerMove[k][ctx.ply] = ctx.killerMove[k - 1][ctx.ply];
 									}
+									ctx.killerMove[0][ctx.ply] = mcode;
 								}
-								
-								break;
 							}
+
+							break;
 						}
 					}
 
