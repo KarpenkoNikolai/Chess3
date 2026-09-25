@@ -97,12 +97,10 @@ namespace Search {
 			struct SearchCtx {
 				uint8_t ply = 0;
 				PvTable pvTable;
-				std::array<uint16_t, MaxSearchDepth> killerMove[4] = {};
+				std::array<std::array<uint16_t, MaxSearchDepth>, 4> killerMove = {};
 				std::array<uint64_t, MaxSearchDepth> repetition = {};
-				std::array<int, MaxSearchDepth> staticEval = {};
 				std::array<MoveCollector<true>, MaxSearchDepth> moveCollectorsWhite = {};
 				std::array<MoveCollector<false>, MaxSearchDepth> moveCollectorsBlack = {};
-				std::array<bool, MaxSearchDepth> singularExtension = {};
 
 				template<bool white>
 				MoveCollector<white>& GetMoveCollector() {
@@ -113,12 +111,10 @@ namespace Search {
 				void Clear() {
 					ply = 0;
 					pvTable.Clear();
-					for (uint8_t i = 0; i < 4; i++) {
+					for (uint8_t i = 0; i < killerMove.size(); i++) {
 						killerMove[i].fill(0);
 					}
 					repetition.fill(0);
-					staticEval.fill(0);
-					singularExtension.fill(false);
 				}
 			};
 
@@ -260,19 +256,16 @@ namespace Search {
 
 			// Dynamische Futility-Margin basierend auf Position
 			template<bool white>
-			int GetAdaptiveFutilityMargin(int depth, bool improving, const Gigantua::Board& brd) const {
-				static constexpr int BaseFutilityMargins[8] =
-				{ 0, 200, 350, 600, 900, 1100, 1600, 2200 };
+			int GetAdaptiveFutilityMargin(int depth, const Gigantua::Board& brd) const {
+				static constexpr int BaseFutilityMargins[5] =
+				{ 0, 200, 650, 1100, 1650 };
 
-				int margin = BaseFutilityMargins[std::min(depth, 7)];
+				int margin = BaseFutilityMargins[std::min(depth, 4)];
 
 				// Modifier: Material-Ungleichgewicht
 				int materialDiff = ComputeMaterialBalance<white>(brd);
 				// Skaliert: bei -2000 bis +2000 Differenz
 				margin += std::clamp(materialDiff / 100, -200, 200);
-
-				// Improving Position → höhere Schwelle für Pruning
-				if (improving) margin += 50;
 
 				return margin;
 			}
@@ -382,8 +375,6 @@ namespace Search {
 					}
 				}
 
-				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
-
 				// Draw detection
 				if (!rootNode && !isNull) {
 					if (isDraw(pos)) return 0;
@@ -414,43 +405,23 @@ namespace Search {
 				if (!rootNode) {
 					ttCost = tTable.Get(pos, ttMove, ttDepth, ttFlag);
 					if (ttCost != TTable::NAN_VAL && ttDepth >= depth && !pvNode) {
+						ttCost = ScoreFromTT(ttCost, ctx.ply);
 						switch (ttFlag) {
 						case TTable::Flag::Value:
-							return ScoreFromTT(ttCost, ctx.ply);
+							return ttCost;
 						case TTable::Flag::Alpha:
-							if (ttCost <= alpha) return ScoreFromTT(ttCost, ctx.ply);
+							if (ttCost <= alpha) return alpha;
 							break;
 						case TTable::Flag::Beta:
-							if (ttCost >= beta) return ScoreFromTT(ttCost, ctx.ply);
+							if (ttCost >= beta) return beta;
 							break;
 						}
 					}
 				}
 
+				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
+
 				ctx.pvTable.table[ctx.ply].Clear();
-
-				// Static evaluation
-				int staticEval = 0;
-				bool improving = false;
-
-				if (inCheck) {
-					staticEval = -MatVal + ctx.ply;
-					ctx.staticEval[ctx.ply] = staticEval;
-				}
-				else {
-					if (ttCost != TTable::NAN_VAL) {
-						staticEval = ttCost;
-					}
-					else {
-						staticEval = Evaluate(pos);
-					}
-					ctx.staticEval[ctx.ply] = staticEval;
-					
-					// Improving heuristic
-					if (ctx.ply >= 2 && !isNull) {
-						improving = staticEval > (ctx.staticEval[ctx.ply - 2] + 60);
-					}
-				}
 
 				MoveCollector<white>& collector = ctx.GetMoveCollector<white>();
 				collector.Reset();
@@ -466,47 +437,49 @@ namespace Search {
 
 				// ===== SINGULAR EXTENSIONS =====
 				bool doSingularExtension = false;
-				if (!inCheck && !rootNode && !isNull && ttMove != 0 && ttCost != TTable::NAN_VAL &&
+				if (!inCheck && !rootNode && ttMove != 0 && ttCost != TTable::NAN_VAL &&
 				    ttDepth >= depth - 3 && ttFlag != TTable::Flag::Alpha)
 				{
 					// Check if TT-move is singular
 					if (IsSingularMove<white>(ctx, pos, ttMove, ScoreToTT(ttCost, ctx.ply), depth)) {
 						doSingularExtension = true;
-						ctx.singularExtension[ctx.ply] = true;
 						depth++;  // Extend by one half-ply
 					}
 				}
 
-				// Null Move Pruning (skip if under mate threat)
-				if (!doSingularExtension && !inCheck && !pvNode && !isNull && !rootNode && depth >= 4 && abs(beta) < InMateVal && staticEval >= beta) {
-					int R = 2 + depth / 4;
-
-					ctx.ply++;
-					const auto nullPos = pos.SkipMove();
-					int score = -MiniMaxAB<!white, true>(ctx, nullPos, depth - R, -beta, -beta + 1);
-
-					ctx.ply--;
-
-					if (score > beta && score < InMateVal) {
-						return score;
-					}
-				}
+				if (depth > 3 && ttMove == 0 && nodePtr.IsNull()) depth--;
 
 				bool doFutilityPruning = false;
-				// Reverse Futility Pruning (Static Null Move Pruning)
-				if (!doSingularExtension && !pvNode && !inCheck && depth <= 7 && !isNull && !rootNode && beta > -3000 && staticEval < 3000) {
-					int margin = 250 + (improving ? 50 : 0);
-					if (staticEval - margin * depth >= beta) {
-						doFutilityPruning = true;
-					}
-				}
+				if (!doSingularExtension && !inCheck && !pvNode && !rootNode) {
+					const int staticEval = Evaluate(pos);
 
-				// ===== STRATEGIC FUTILITY PRUNING =====
-				// Adaptive Futility Margins mit Material-Awareness
-				if (!doFutilityPruning && !doSingularExtension && !pvNode && !inCheck && depth <= 7 && !isNull && !rootNode && alpha < InMateVal) {
-					int margin = GetAdaptiveFutilityMargin<white>(depth, improving, pos);
-					if (staticEval + margin <= alpha) {
-						doFutilityPruning = true;
+					if (depth < 5 && beta > -3000 && staticEval - 220 * depth >= beta) {
+						return staticEval;
+					}
+
+					// Null Move Pruning (skip if under mate threat)
+					if (depth >= 4 && !isNull && abs(beta) < InMateVal && staticEval >= beta) {
+						int R = 2 + depth / 4;
+
+						ctx.ply++;
+						const auto nullPos = pos.SkipMove();
+						int score = -MiniMaxAB<!white, true>(ctx, nullPos, depth - R, -beta, -beta + 1);
+
+						ctx.ply--;
+
+						if (!searchStarted) return 0;
+						if (score > beta && score < InMateVal) {
+							return score;
+						}
+					}
+
+					// ===== STRATEGIC FUTILITY PRUNING =====
+					// Adaptive Futility Margins mit Material-Awareness
+					if (depth < 5 && alpha < InMateVal) {
+						int margin = GetAdaptiveFutilityMargin<white>(depth, pos);
+						if (staticEval + margin <= alpha) {
+							doFutilityPruning = true;
+						}
 					}
 				}
 
@@ -544,7 +517,7 @@ namespace Search {
 					if (mcode == ttMove) order += 1000000;
 					if (mcode == antMove) order += 200000;
 
-					for (size_t k = 0; k < 4; k++){
+					for (size_t k = 0; k < ctx.killerMove.size(); k++){
 						if (mcode == ctx.killerMove[k][ctx.ply]) order += KillerMoveCost - k;
 					}
 
@@ -577,10 +550,10 @@ namespace Search {
 
 					// ===== SINGULAR MOVE EXTENSION =====
 					// Don't reduce moves marked as singular
-					bool isSingularMove = (mcode == ttMove && ctx.singularExtension[ctx.ply - 1]);
+					bool isSingularMove = (mcode == ttMove && doSingularExtension);
 
 					// Late move pruning (LMP)
-					if (!improving && !isSingularMove && depth <= 8 && !inCheck && !pvNode && quietMoveCount > (6 + depth * depth)) {
+					if (!isSingularMove && depth <= 8 && !inCheck && !pvNode && quietMoveCount > (6 + depth * depth)) {
 						break;
 					}
 
@@ -595,12 +568,11 @@ namespace Search {
 					int score = -1000000;
 
 					// Late Move Reduction (LMR) - disabled under mate threat or when giving check
-					if (m > 0 && !inCheck && depth > 3 && order < 9000 && !isSingularMove) {
+					if (m > 0 && !inCheck && depth > 2 && order < 2000 && !isSingularMove) {
 						int reduction = LMRTable[depth][m < 64 ? m : 63];
 
-						if (!pvNode) reduction++;
-						if (reduction && improving) reduction--;
-						if (isQuiet) reduction++;
+						if (pvNode) reduction = 0;
+						if (!pvNode && isQuiet) reduction++;
 						if (order > 100) reduction = 0;
 																		
 						// Reduced depth search
@@ -630,7 +602,7 @@ namespace Search {
 							if (isQuiet) {
 								// Killer moves
 								if (ctx.killerMove[0][ctx.ply] != mcode) {
-									for(size_t k = 4; k > 0; k--) {
+									for(size_t k = ctx.killerMove.size() - 1; k > 0; k--) {
 										ctx.killerMove[k][ctx.ply] = ctx.killerMove[k - 1][ctx.ply];
 									}
 									ctx.killerMove[0][ctx.ply] = mcode;

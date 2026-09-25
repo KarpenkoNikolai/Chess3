@@ -56,7 +56,7 @@ namespace Search {
 			template <bool white>
 			float getProbability() const
 			{
-				if (entries == 0) return 4000.0f;
+				if (entries == 0) return 40.0f;
 
 				if constexpr (white) {
 					return float(sugar + 1.0f) / float(500 * entries);
