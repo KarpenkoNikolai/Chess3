@@ -97,7 +97,7 @@ namespace Search {
 			struct SearchCtx {
 				uint8_t ply = 0;
 				PvTable pvTable;
-				std::array<std::array<uint16_t, MaxSearchDepth>, 4> killerMove = {};
+				std::array<std::array<uint16_t, MaxSearchDepth>, 3> killerMove = {};
 				std::array<uint64_t, MaxSearchDepth> repetition = {};
 				std::array<MoveCollector<true>, MaxSearchDepth> moveCollectorsWhite = {};
 				std::array<MoveCollector<false>, MaxSearchDepth> moveCollectorsBlack = {};
@@ -232,40 +232,12 @@ namespace Search {
 				return white ? (whiteScore - blackScore) : (blackScore - whiteScore);
 			}
 
-			// Singular Extension Detection
-			// Returns true if the TT-move is singular (significantly better than other moves)
 			template<bool white>
-			bool IsSingularMove(SearchCtx& ctx, const Gigantua::Board& pos,
-				uint16_t ttMove, int ttValue, int8_t depth) {
-				if (depth < 6) return false;
+			int GetFutilityMargin(int depth, const Gigantua::Board& brd) const {
+				static constexpr int BaseFutilityMargins[6] =
+				{ 0, 220, 650, 1100, 1650, 2200 };
 
-				// Adaptive Fenster
-				int margin = (depth < 12) ? depth : 12;  // Cap bei 12
-				int seAlpha = ttValue - margin;
-				int seBeta = ttValue - margin + 1;
-
-				int seScore = MiniMaxAB<white>(ctx, pos, depth - 3, seAlpha, seBeta);
-
-				// Multi-Cut: auch wenn unter Alpha, aber knapp drüber
-				if (seScore > seAlpha && seScore < ttValue - 1) {
-					return false;  // Nicht eindeutig
-				}
-
-				return seScore <= seAlpha;
-			}
-
-			// Dynamische Futility-Margin basierend auf Position
-			template<bool white>
-			int GetAdaptiveFutilityMargin(int depth, const Gigantua::Board& brd) const {
-				static constexpr int BaseFutilityMargins[5] =
-				{ 0, 200, 650, 1100, 1650 };
-
-				int margin = BaseFutilityMargins[std::min(depth, 4)];
-
-				// Modifier: Material-Ungleichgewicht
-				int materialDiff = ComputeMaterialBalance<white>(brd);
-				// Skaliert: bei -2000 bis +2000 Differenz
-				margin += std::clamp(materialDiff / 100, -200, 200);
+				int margin = BaseFutilityMargins[std::min(depth, 5)];
 
 				return margin;
 			}
@@ -435,25 +407,11 @@ namespace Search {
 					return 0;
 				}
 
-				// ===== SINGULAR EXTENSIONS =====
-				bool doSingularExtension = false;
-				if (!inCheck && !rootNode && ttMove != 0 && ttCost != TTable::NAN_VAL &&
-				    ttDepth >= depth - 3 && ttFlag != TTable::Flag::Alpha)
-				{
-					// Check if TT-move is singular
-					if (IsSingularMove<white>(ctx, pos, ttMove, ScoreToTT(ttCost, ctx.ply), depth)) {
-						doSingularExtension = true;
-						depth++;  // Extend by one half-ply
-					}
-				}
-
-				if (depth > 3 && ttMove == 0 && nodePtr.IsNull()) depth--;
-
 				bool doFutilityPruning = false;
-				if (!doSingularExtension && !inCheck && !pvNode && !rootNode) {
+				if (!inCheck && !pvNode && !rootNode) {
 					const int staticEval = Evaluate(pos);
 
-					if (depth < 5 && beta > -3000 && staticEval - 220 * depth >= beta) {
+					if (depth < 6 && beta > -3000 && staticEval - 220 * depth >= beta) {
 						return staticEval;
 					}
 
@@ -473,10 +431,17 @@ namespace Search {
 						}
 					}
 
+					if (depth <= 3 && ttMove == 0 && alpha > -InMateVal &&
+						staticEval + 300 + 100 * depth <= alpha) {
+						const int razorScore = QuiescenceSearch<white>(ctx, pos, alpha, beta);
+						if (!searchStarted) return 0;
+						if (razorScore <= alpha) return razorScore;
+					}
+
 					// ===== STRATEGIC FUTILITY PRUNING =====
 					// Adaptive Futility Margins mit Material-Awareness
-					if (depth < 5 && alpha < InMateVal) {
-						int margin = GetAdaptiveFutilityMargin<white>(depth, pos);
+					if (depth < 6 && alpha < InMateVal) {
+						int margin = GetFutilityMargin<white>(depth, pos);
 						if (staticEval + margin <= alpha) {
 							doFutilityPruning = true;
 						}
@@ -538,22 +503,12 @@ namespace Search {
 					const Gigantua::Board::Move<white> move(collector.moves[collector.index[m]]);
 					const auto mcode = collector.moves[collector.index[m]];
 
-					const bool isCapture = order > 100 && order < 9000;
 					const bool isQuiet = order == 0;
 
 					if (isQuiet) quietMoveCount++;
 
 					// Extended Futility Pruning: Skip quiet moves
 					if (doFutilityPruning && quietMoveCount > 0) {
-						break;
-					}
-
-					// ===== SINGULAR MOVE EXTENSION =====
-					// Don't reduce moves marked as singular
-					bool isSingularMove = (mcode == ttMove && doSingularExtension);
-
-					// Late move pruning (LMP)
-					if (!isSingularMove && depth <= 8 && !inCheck && !pvNode && quietMoveCount > (6 + depth * depth)) {
 						break;
 					}
 
@@ -568,11 +523,10 @@ namespace Search {
 					int score = -1000000;
 
 					// Late Move Reduction (LMR) - disabled under mate threat or when giving check
-					if (m > 0 && !inCheck && depth > 2 && order < 2000 && !isSingularMove) {
+					if (m > 0 && !inCheck && depth > 3 && order < 2000) {
 						int reduction = LMRTable[depth][m < 64 ? m : 63];
 
 						if (pvNode) reduction = 0;
-						if (!pvNode && isQuiet) reduction++;
 						if (order > 100) reduction = 0;
 																		
 						// Reduced depth search
