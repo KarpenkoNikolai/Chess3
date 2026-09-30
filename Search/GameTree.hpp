@@ -56,13 +56,13 @@ namespace Search {
 			template <bool white>
 			float getProbability() const
 			{
-				if (entries == 0) return 40.0f;
+				if (entries == 0) return 1;
 
 				if constexpr (white) {
-					return float(sugar + 1.0f) / float(200 * entries);
+					return (sugar + 1)/(toxin + 1);
 				}
 				else {
-					return float(toxin + 1.0f) / float(200 * entries);
+					return (toxin + 1)/(sugar + 1);
 				}
 			}
 		};

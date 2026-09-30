@@ -105,10 +105,10 @@ namespace Ant {
 		static constexpr float MatVal = 100000.0f;
 
 		Gigantua::Board m_current;
+		float m_currentCost = 0;
 		AlphaBeta::SearchEngine m_abEngine;
 		std::array<uint64_t, 16> history;
-		static constexpr size_t MaxAnt = 16;
-		static constexpr size_t ABAnt = 32;
+		static constexpr size_t MaxAnt = 64;
 
 		enum class AntStepResult
 		{
@@ -121,7 +121,7 @@ namespace Ant {
 		};
 
 		template <bool MoveWhite>
-		inline AntStepResult DoStep(SearchContext& ctx, bool maxAnt, bool abAnt,
+		inline AntStepResult DoStep(SearchContext& ctx, bool maxAnt,
 			Gigantua::Board& position, uint8_t& ply,
 			std::array<uint64_t, SearchContext::MaxPath>& repetition)
 		{
@@ -160,31 +160,8 @@ namespace Ant {
 			uint8_t moveIndex = 0;
 			bool isRndAnt = true;
 
-			// AB-Ant: follow best line from AlphaBeta engine
-			if (abAnt && ply < AlphaBeta::MaxSearchDepth) {
-				const auto ab_line = m_abEngine.GetBestLine();
-				if (ply < ab_line.size) {
-					const uint16_t abMove = ab_line.line[ply];
-					// Find the edge matching the AB best move
-					for (uint8_t k = 0; k < edges.size(); k++) {
-						if (edges[k].Move() == abMove) {
-							moveIndex = k;
-							isRndAnt = false;
-							break;
-						}
-					}
-					// If AB move not found in edges, fall back to max probability
-					if (isRndAnt) {
-						abAnt = false; // Disable AB-Ant for this step
-					}
-				}
-				else {
-					abAnt = false; // End of AB line, fall back to normal ant behavior
-				}
-			}
-
 			// Max-Ant: choose move with highest probability
-			if (!abAnt && maxAnt) {
+			if (maxAnt) {
 				isRndAnt = false;
 				float maxProb = 0;
 				for (uint8_t k = 0; k < edges.size(); k++) {
@@ -254,7 +231,7 @@ namespace Ant {
 		}
 
 		template <bool white>
-		void RunAnt(SearchContext& ctx, bool maxAnt, bool abAnt) {
+		void RunAnt(SearchContext& ctx, bool maxAnt) {
 			uint8_t ply = 0;
 			Gigantua::Board position = m_current;
 			AntStepResult stepResult = AntStepResult::EndPath;
@@ -263,13 +240,13 @@ namespace Ant {
 			while (ply < SearchContext::MaxPath - 2) {
 				// first move: this is "my" move when RunAnt<white> and DoStep<white, true>
 				{
-					stepResult = DoStep<white>(ctx, maxAnt, abAnt, position, ply, repetition);
+					stepResult = DoStep<white>(ctx, maxAnt, position, ply, repetition);
 					if (stepResult != AntStepResult::Success) break;
 				}
 
 				// second move: opponent move
 				{
-					stepResult = DoStep<!white>(ctx, maxAnt, abAnt, position, ply, repetition);
+					stepResult = DoStep<!white>(ctx, maxAnt, position, ply, repetition);
 					if (stepResult != AntStepResult::Success) break;
 				}
 			}// while path
@@ -287,9 +264,9 @@ namespace Ant {
 			}
 			else {
 				if (white == position.status.WhiteMove())
-					cost = m_costFunc(position);
+					cost = m_costFunc(position) - m_currentCost;
 				else
-					cost = -m_costFunc(position);
+					cost = -m_costFunc(position) - m_currentCost;
 
 			}
 
@@ -337,6 +314,7 @@ namespace Ant {
 		void Set(const Gigantua::Board& brd) {
 			Stop();
 			m_current = brd;
+			m_currentCost = m_costFunc(brd) * 2;
 		}
 
 		void SetHistory(const std::array<uint64_t, 16>& h) {
@@ -369,32 +347,22 @@ namespace Ant {
 				m_threads[i].started = true;
 				m_threads[i].thread.reset(new std::thread([this, i]() {
 					size_t maxAnt = 0;
-					size_t abAnt = 0;
 					while (m_threads[i].started) {
 						maxAnt++;
-						abAnt++;
 
 						if (maxAnt > MaxAnt) {
 							if (m_current.status.WhiteMove())
-								RunAnt<true>(m_threads[i].ctx, true, false);
+								RunAnt<true>(m_threads[i].ctx, true);
 							else {
-								RunAnt<false>(m_threads[i].ctx, true, false);
+								RunAnt<false>(m_threads[i].ctx, true);
 							}
 							maxAnt = 0;
 						}
-						else if (abAnt > ABAnt) {
-							if (m_current.status.WhiteMove())
-								RunAnt<true>(m_threads[i].ctx, false, true);
-							else {
-								RunAnt<false>(m_threads[i].ctx, false, true);
-							}
-							abAnt = 0;
-						}
 						else {
 							if (m_current.status.WhiteMove())
-								RunAnt<true>(m_threads[i].ctx, false, false);
+								RunAnt<true>(m_threads[i].ctx, false);
 							else {
-								RunAnt<false>(m_threads[i].ctx, false, false);
+								RunAnt<false>(m_threads[i].ctx, false);
 							}
 						}
 					}
