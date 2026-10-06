@@ -196,7 +196,7 @@ namespace Search {
 			const int advanceRank = white ? rank : 7 - rank;
 
 			// Der Bonus steigt, je näher der Bauer an der Umwandlung ist.
-			result += 40 + advanceRank * 20;
+			result += 60 + advanceRank * 30;
 		}
 
 		return result;
