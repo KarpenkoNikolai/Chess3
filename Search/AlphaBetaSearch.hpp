@@ -37,7 +37,7 @@ namespace Search {
 					while (d_tmp > 1) { logDepth++; d_tmp >>= 1; }
 					while (m_tmp > 1) { logMove++; m_tmp >>= 1; }
 						
-					table[d][m] = logMove * logDepth * 30 / 100;
+					table[d][m] = logMove * logDepth * 25 / 100;
 				}
 			}
 			return table;
@@ -57,7 +57,7 @@ namespace Search {
 			static constexpr int MatVal = 500000;
 			static constexpr int InMateVal = MatVal - MaxSearchDepth;
 			static constexpr int KillerMoveCost = 150;
-			static constexpr int AspirationWindow = 250;
+			static constexpr int AspirationWindow = 200;
 
 			Search::TTable tTable;
 
@@ -96,8 +96,9 @@ namespace Search {
 // Search context per thread
 			struct SearchCtx {
 				uint8_t ply = 0;
+				int nmpPly = 0;
 				PvTable pvTable;
-				std::array<std::array<uint16_t, MaxSearchDepth>, 3> killerMove = {};
+				std::array<std::array<uint16_t, MaxSearchDepth>, 4> killerMove = {};
 				std::array<uint64_t, MaxSearchDepth> repetition = {};
 				std::array<MoveCollector<true>, MaxSearchDepth> moveCollectorsWhite = {};
 				std::array<MoveCollector<false>, MaxSearchDepth> moveCollectorsBlack = {};
@@ -110,6 +111,7 @@ namespace Search {
 
 				void Clear() {
 					ply = 0;
+					nmpPly = 0;
 					pvTable.Clear();
 					for (uint8_t i = 0; i < killerMove.size(); i++) {
 						killerMove[i].fill(0);
@@ -183,7 +185,7 @@ namespace Search {
 					int order = SimpleSort(pos, mv);
 
 					if (mcode == ttMove) order += 1000000;
-					if (mcode == antMove) order += 200000;
+					if (mcode == antMove) order += 1111111;
 
 					for (size_t k = 0; k < ctx.killerMove.size(); k++) {
 						if (mcode == ctx.killerMove[k][ctx.ply]) order += KillerMoveCost - k;
@@ -274,12 +276,16 @@ namespace Search {
 				if (ctx.ply >= MaxSearchDepth) return 0;
 				if (isDraw(pos, ctx)) return 0;
 
+				const int originalAlpha = alpha;
+
 				int stand_pat = 0;
 				const bool inCheck = Gigantua::MoveList::InCheck<white>(pos);
 
 				if (!inCheck) {
 					stand_pat = Evaluate(pos);
-					if (stand_pat >= beta) return beta;
+					if (stand_pat >= beta) {
+						return beta;
+					}
 					if (stand_pat > alpha) alpha = stand_pat;
 				}
 
@@ -301,6 +307,7 @@ namespace Search {
 					}
 				}
 
+				uint16_t bestMove = 0;
 				for (uint8_t i = 0; i < collector.size; i++) {
 
 					collector.SortMoves(i);
@@ -321,6 +328,7 @@ namespace Search {
 
 					if (score > alpha) {
 						alpha = score;
+						bestMove = move.move;
 
 						if (alpha >= beta) {
 							break;
@@ -331,16 +339,15 @@ namespace Search {
 				}
 
 				if (collector.size == 0) {
-					if (inCheck) {
-						return -MatVal + ctx.ply;
-					}
-					return 0;
+					return inCheck ? -MatVal + ctx.ply : 0;
 				}
+
+				if (!searchStarted) return 0;
 
 				return alpha;
 			}
 
-			template<bool white, bool singularSearch = false> int MiniMaxAB(
+			template<bool white> int MiniMaxAB(
 				SearchCtx& ctx,
 				const Gigantua::Board& pos,
 				int8_t depth, int alpha, int beta)
@@ -357,7 +364,7 @@ namespace Search {
 				}
 
 				const bool rootNode = (ctx.ply == 0);
-				const bool pvNode = (beta - alpha) > 1;
+				const bool pvNode = abs(beta - alpha) > 1 || rootNode;
 
 				// Mate distance pruning
 				if (!rootNode) {
@@ -388,17 +395,10 @@ namespace Search {
 				uint8_t ttDepth = 0;
 				TTable::Flag ttFlag = TTable::Flag::Alpha;
 				ttCost = tTable.Get(pos, ttMove, ttDepth, ttFlag);
-				if (ttCost != TTable::NAN_VAL && ttDepth >= depth && !pvNode && !singularSearch) {
-					ttCost = ScoreFromTT(ttCost, ctx.ply);
-					switch (ttFlag) {
-					case TTable::Flag::Value:
-						return ttCost;
-					case TTable::Flag::Alpha:
-						if (ttCost <= alpha) return alpha;
-						break;
-					case TTable::Flag::Beta:
-						if (ttCost >= beta) return beta;
-						break;
+				if (ttCost != TTable::NAN_VAL) {
+					const int ttScore = ScoreFromTT(ttCost, ctx.ply);
+					if (ttDepth >= depth && !pvNode && ttFlag == TTable::Flag::Value) {
+						return ttScore;
 					}
 				}
 
@@ -409,38 +409,23 @@ namespace Search {
 				Gigantua::MoveList::EnumerateMoves<MoveCollector<white>, white>(collector, pos);
 
 				if (collector.size == 0) {
-					if (inCheck) {
-						return -MatVal + ctx.ply;
-					}
-					return 0;
+					return inCheck ? -MatVal + ctx.ply : 0;
 				}
-
-				bool doFutilityPruning = false;
-				bool badPosition = false;
-				if (!inCheck && !pvNode && !rootNode && !singularSearch) {
+				
+				if (!inCheck && !pvNode) {
 					const int staticEval = Evaluate(pos);
 
-					if (depth < 7 && beta > -3000 && staticEval - 320 * depth > beta) {
-						return beta + (staticEval - beta) / 3;
+					if (depth < 5 && staticEval + 700 * depth < alpha && alpha < InMateVal) {
+						return QuiescenceSearch<white>(ctx, pos, alpha, beta);
 					}
 
-					if (depth < 5 && staticEval + 500 * depth < alpha && alpha < InMateVal) {
-						const int score = QuiescenceSearch<white>(ctx, pos, alpha, beta);
-						if (score > alpha) {
-							return score;
-						}
-					}
-
-					if (depth < 7 && alpha < InMateVal && staticEval + 320 * depth < alpha) {
-						doFutilityPruning = true;
-					}
-
-					if (alpha < InMateVal && staticEval + (100 + 10 * depth) < alpha) {
-						badPosition = true;
+					int futilityMargin = 320 * depth;
+					if (depth < 9 && abs(beta) < 3000 && staticEval - futilityMargin > beta) {
+						return staticEval - futilityMargin;
 					}
 				}
 
-				if (!inCheck && ttMove == 0 && depth > 4) {
+				if (!inCheck && ttMove == 0 && depth > 5) {
 					depth--;
 				}
 
@@ -448,11 +433,11 @@ namespace Search {
 				OrderMoves<white>(ctx, pos, collector, nodePtr, ttMove);
 
 				const uint8_t searchSize = collector.size;
+
 				int bestScore = -std::numeric_limits<int>::max();
 				int quietMoveCount = 0;
 				uint16_t bestMoveFound = 0;
-				int cutCount = 0;
-				int lmpThreshold = 7 + depth * depth;
+				int lmpThreshold = 3 + depth * depth;
 		
 				for (uint8_t m = 0; m < searchSize; m++) {					
 					collector.SortMoves(m);
@@ -466,38 +451,10 @@ namespace Search {
 
 					if (isQuiet) quietMoveCount++;
 
-					// ============ Singular Extensions ============
-					int extension = 0;
-					bool singular = false;
-					if (depth >= 8 && mcode == ttMove && !rootNode && !singularSearch &&
-						std::abs(ttCost) < InMateVal &&
-						(ttFlag == TTable::Flag::Beta || ttFlag == TTable::Flag::Value) && ttDepth >= depth - 3
-					) {
-						int singularMargin = (44 + 65 * (pvNode ? 1 : 0)) *	depth / 58;
-						int singularBeta = ttCost - singularMargin;
-						int rDepth = (depth - 1) / 2;
-
-						// Search excluding the TT move at reduced depth
-						int seScore = MiniMaxAB<white, true>(ctx, pos, rDepth, singularBeta - 1, singularBeta);
-
-						if (seScore < singularBeta) {
-							extension = 1; // TT move is singular - extend!
-							singular = true;
-						}
-						else if (beta > -3000 && seScore >= beta && std::abs(seScore) < InMateVal) {
-							return seScore; // MultiCut: all moves are good enough
-						}
+					if (quietMoveCount > 0 && bestScore > -InMateVal && !inCheck && !pvNode) {
+						if (quietMoveCount > lmpThreshold)
+							break;
 					}
-
-					// Extended Futility Pruning: Skip quiet moves
-					if (!singular && bestScore > -InMateVal && doFutilityPruning && quietMoveCount > 0) {
-						break;
-					}
-
-					if (!singular && bestScore > -InMateVal && !inCheck && !pvNode && quietMoveCount > lmpThreshold) {
-						break;
-					}
-
 
 					const auto next = move.play(pos);
 
@@ -506,15 +463,16 @@ namespace Search {
 						ctx.repetition[ctx.ply] = next.Hash;
 					}
 
-					int newDepth = depth - 1 + extension;
+					int newDepth = depth - 1;
 					int score = -1000000;
+					int reduction = 0;
 
 					// Late Move Reduction (LMR) - disabled under mate threat or when giving check
-					if (m > 0 && !inCheck && depth > 3 && order < 9000 && !singular) {
-						int reduction = LMRTable[depth][quietMoveCount < 64 ? quietMoveCount : 63];
+					if (m > 0 && !inCheck && order < 9000) {
+						reduction = LMRTable[depth < 64 ? depth : 63][quietMoveCount < 64 ? quietMoveCount : 63];
 
-						if (isQuiet && badPosition) reduction++;
-						if (order > 100 || pvNode) reduction = 0;
+						if (!pvNode && isQuiet) reduction++;
+						if (order > 100 || depth < 4 || m < 4) reduction = 0;
 																		
 						// Reduced depth search
 						score = -MiniMaxAB<!white>(ctx, next, newDepth - reduction, -alpha - 1, -alpha);
@@ -539,7 +497,7 @@ namespace Search {
 
 					if (alpha >= beta) {
 						// Beta cutoff - update heuristics
-						if (isQuiet) {
+						if (order < 100) {
 							// Killer moves
 							if (ctx.killerMove[0][ctx.ply] != mcode) {
 								for (size_t k = ctx.killerMove.size() - 1; k > 0; k--) {
@@ -608,9 +566,18 @@ namespace Search {
 				ctx.repetition[0] = current.Hash;
 
 				searchStarted = true;
-				int score = MiniMaxAB<white>(ctx, current, depth, -MatVal, MatVal);
+				int score = 0;
+				for (int d = 1; d <= depth && searchStarted; d++) {
+					score = MiniMaxAB<white>(ctx, current, d, -MatVal, MatVal);
+					if (searchStarted && ctx.pvTable.GetBest().size > 0) {
+						bestMove = ctx.pvTable.GetBest().line[0];
+					}
+
+					if (abs(score) >= InMateVal) {
+						break;
+					}
+				}
 				searchStarted = false;
-				bestMove = ctx.pvTable.GetBest().line[0];
 				return score;
 			}
 
@@ -654,7 +621,6 @@ namespace Search {
 					searchThreads[i].threadPtr.reset(new std::thread([this, current, milliseconds, i, onWin, threadsNum]() {
 						uint8_t depth = i == 0 ? 0 : 1;
 						int64_t search_time_ms = milliseconds;
-						uint16_t lastBestMove = 0;
 						int previousScore = 0;
 						bool hasPreviousScore = false;
 
@@ -721,17 +687,7 @@ namespace Search {
 									if (minimax_ms < search_time_ms) {
 										search_time_ms -= minimax_ms;
 									}
-
-									if (search_time_ms < (lastBestMove == currentBestMove ? minimax_ms : 0)) {
-										if (onWin) {
-											onWin(0);
-										}
-										searchStarted = false;
-										break;
-									}
 								}
-
-								lastBestMove = currentBestMove;
 							}
 						}
 					}));

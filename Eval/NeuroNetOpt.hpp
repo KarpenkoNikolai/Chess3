@@ -170,12 +170,10 @@ namespace NN
 			const uint8_t wKingIndex = SquareOf(brd.WKing);
 			const uint8_t bKingIndex = SquareOf(mirr.WKing);
 
-			std::memcpy(acc, mFirstBiases + wKingIndex * HalfInputSize, HalfInputSize * sizeof(int32_t));
-			std::memcpy(acc + HalfInputSize, mFirstBiases + bKingIndex * HalfInputSize, HalfInputSize * sizeof(int32_t));
-
 			if constexpr (white) {
 				int32_t* accPtr = acc;
 				{
+					std::memcpy(accPtr, mFirstBiases + wKingIndex * HalfInputSize, HalfInputSize * sizeof(int32_t));
 					const int16_t* wWeights = mFirstWeights + wKingIndex * InputSize * HalfInputSize;
 					for (uint16_t j = 0; j < mIndexW.size; j++) {
 						const int16_t* w = wWeights + HalfInputSize * mIndexW.value[j];
@@ -187,6 +185,7 @@ namespace NN
 
 				accPtr = acc + HalfInputSize;
 				{
+					std::memcpy(accPtr, mFirstBiases + bKingIndex * HalfInputSize, HalfInputSize * sizeof(int32_t));
 					const auto& bWeights = mFirstWeights + bKingIndex * InputSize * HalfInputSize;
 					for (uint16_t j = 0; j < mIndexB.size; j++) {
 						const int16_t* w = bWeights + HalfInputSize * (mIndexB.value[j]);
@@ -199,6 +198,7 @@ namespace NN
 			else {
 				int32_t* accPtr = acc;
 				{
+					std::memcpy(accPtr, mFirstBiases + bKingIndex * HalfInputSize, HalfInputSize * sizeof(int32_t));
 					const int16_t* bWeights = mFirstWeights + bKingIndex * InputSize * HalfInputSize;
 					for (uint16_t j = 0; j < mIndexB.size; j++) {
 						const int16_t* w = bWeights + HalfInputSize * mIndexB.value[j];
@@ -210,6 +210,7 @@ namespace NN
 
 				accPtr = acc + HalfInputSize;
 				{
+					std::memcpy(accPtr, mFirstBiases + wKingIndex * HalfInputSize, HalfInputSize * sizeof(int32_t));
 					const auto& wWeights = mFirstWeights + wKingIndex * InputSize * HalfInputSize;
 					for (uint16_t j = 0; j < mIndexW.size; j++) {
 						const int16_t* w = wWeights + HalfInputSize * (mIndexW.value[j]);

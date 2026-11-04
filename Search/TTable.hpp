@@ -1,6 +1,8 @@
 #pragma once
 
 #include <array>
+#include <bit>
+#include <cstdint>
 #include <vector>
 #include <limits>
 
@@ -20,13 +22,14 @@ namespace Search {
 		static constexpr int NAN_VAL = 0x7fffffff;
 
 		struct Node {
-			uint64_t brdHash;
+			uint64_t brdHash = 0;
 			uint64_t smpKey = 0ull;
 			uint64_t smpData = NAN_VAL;
 
 			int ExtractScore() const {
-				const uint32_t scoreData = (smpData & 0x00000000FFFFFFFFull);
-				return *(int*)(&scoreData);
+				static_assert(sizeof(int) == sizeof(uint32_t));
+				const auto scoreData = static_cast<uint32_t>(smpData & 0x00000000FFFFFFFFull);
+				return std::bit_cast<int>(scoreData);
 			}
 
 			uint16_t ExtractMove() const {
@@ -42,8 +45,8 @@ namespace Search {
 			}
 
 			static uint64_t PackData(int score, uint16_t move, uint8_t depth, Flag flag) {
-				const int s = score;
-				const uint64_t scoreData = *(uint32_t*)(&s);
+				static_assert(sizeof(int) == sizeof(uint32_t));
+				const uint64_t scoreData = std::bit_cast<uint32_t>(score);
 				const uint64_t moveData = move;
 				const uint64_t depthData = depth;
 				const uint64_t flagData = (uint8_t)flag;
@@ -79,7 +82,7 @@ namespace Search {
 			for(size_t i = 0; i < BucketSize; i++) {
 				const Node& node = bucket[i];
 				const uint64_t testKey = brd.Hash ^ node.smpData;
-				if (testKey == node.smpKey && node.ExtractFlag() == Flag::Value && node.brdHash == brd.Hash) {
+				if (testKey == node.smpKey && node.brdHash == brd.Hash) {
 					return node.ExtractMove();
 				}
 			}

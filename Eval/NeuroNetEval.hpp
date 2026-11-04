@@ -8,6 +8,63 @@ namespace NN
 {
 	class NeuroNetEval
 	{
+	private:
+		struct CacheEntry {
+			static constexpr int NAN_VAL = 0x7fffffff;
+
+			struct Node {
+				uint64_t brdHash;
+				uint64_t smpKey = 0ull;
+				uint64_t smpData = NAN_VAL;
+
+				int ExtractScore() const {
+					const uint32_t scoreData = (smpData & 0x00000000FFFFFFFFull);
+					return *(int*)(&scoreData);
+				}
+
+				static uint64_t PackData(int score) {
+					const int s = score;
+					const uint64_t scoreData = *(uint32_t*)(&s);
+					uint64_t data = scoreData;
+					return data;
+				}
+
+			};
+
+			const size_t HashTableSize;
+
+			typedef std::vector<Node> HashTable;
+
+			mutable HashTable hashTable;
+
+			CacheEntry() : HashTableSize(20000000), hashTable(HashTableSize) {}
+
+			int Get(const Gigantua::Board& brd) {
+				Node& node = hashTable[brd.Hash % HashTableSize];
+				const uint64_t testKey = brd.Hash ^ node.smpData;
+
+				if (testKey == node.smpKey && node.brdHash == brd.Hash) {
+					return node.ExtractScore();
+				}
+
+				return NAN_VAL;
+			}
+
+			void Put(const Gigantua::Board& brd, int cost) {
+				Node& node = hashTable[brd.Hash % HashTableSize];
+
+				if (node.smpKey != 0) {
+					if (node.brdHash == brd.Hash)
+						return;
+				}
+						
+				node.brdHash = brd.Hash;
+				node.smpData = Node::PackData(cost);
+				node.smpKey = brd.Hash ^ node.smpData;
+			}
+		};
+
+		CacheEntry m_cacheEntry;
 	public:
 		NeuroNetOpt m_nn;
 
@@ -77,13 +134,20 @@ namespace NN
 			return eval;
 		}
 
-		float Evaluate(const Gigantua::Board& brd)
+		int Evaluate(const Gigantua::Board& brd)
 		{
-			float nnEval = m_nn.Evaluate(brd);
+			int cost = m_cacheEntry.Get(brd);
+			if (cost != CacheEntry::NAN_VAL) {
+				return cost;
+			}
+
+			int nnEval = m_nn.Evaluate(brd);
 			if (abs(nnEval) > 2300) {
-				const float matEval = (EvaluateMaterial(brd) + EvaluateQueenKingMate(brd));
+				const int matEval = (EvaluateMaterial(brd) + EvaluateQueenKingMate(brd));
 				nnEval += brd.status.WhiteMove() ? matEval : -matEval;
 			}
+
+			m_cacheEntry.Put(brd, nnEval);
 			
 			return nnEval;
 		}
