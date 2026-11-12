@@ -37,7 +37,7 @@ namespace Search {
 					while (d_tmp > 1) { logDepth++; d_tmp >>= 1; }
 					while (m_tmp > 1) { logMove++; m_tmp >>= 1; }
 						
-					table[d][m] = (logMove * logDepth * 3 + 4) / 10;
+					table[d][m] = (logMove * logDepth * 3 + 2) / 10;
 				}
 			}
 			return table;
@@ -96,7 +96,6 @@ namespace Search {
 // Search context per thread
 			struct SearchCtx {
 				uint8_t ply = 0;
-				int nmpPly = 0;
 				PvTable pvTable;
 				std::array<std::array<uint16_t, MaxSearchDepth>, 4> killerMove = {};
 				std::array<uint64_t, MaxSearchDepth> repetition = {};
@@ -111,7 +110,6 @@ namespace Search {
 
 				void Clear() {
 					ply = 0;
-					nmpPly = 0;
 					pvTable.Clear();
 					for (uint8_t i = 0; i < killerMove.size(); i++) {
 						killerMove[i].fill(0);
@@ -420,34 +418,6 @@ namespace Search {
 					return inCheck ? -MatVal + ctx.ply : 0;
 				}
 
-				bool futilityPruning = false;
-				if (!inCheck) {
-					const int staticEval = Evaluate(pos);
-				
-					if (depth < 7 && staticEval + 200 * depth < alpha && alpha < InMateVal) {
-						futilityPruning = true;
-					}
-
-					const uint64_t nonPawnMaterial = white
-						? (pos.WKnight | pos.WBishop | pos.WRook | pos.WQueen)
-						: (pos.BKnight | pos.BBishop | pos.BRook | pos.BQueen);
-
-					if (depth >= 3 && ctx.nmpPly == 0 && nonPawnMaterial != 0
-						&& staticEval >= beta + 300 && beta > -2000) {
-						const int reduction = 2 + depth / 4;
-						const auto nullPos = pos.SkipMove();
-
-						ctx.ply++;
-						ctx.nmpPly++;
-						const int score = -MiniMaxAB<!white>(ctx, nullPos, depth - reduction, -beta, -beta + 1);
-						ctx.nmpPly--;
-						ctx.ply--;
-
-						if (!searchStarted) return 0;
-						if (score >= beta && abs(score) < InMateVal) return beta;
-					}
-				}
-
 				if (!inCheck && ttMove == 0 && depth > 5) {
 					depth--;
 				}
@@ -472,10 +442,6 @@ namespace Search {
 					const bool isQuiet = order == 0;
 
 					if (isQuiet && !inCheck) quietMoveCount++;
-
-					if (quietMoveCount > (2 + depth/2) && futilityPruning) {
-						break;
-					}
 
 					const auto next = move.play(pos);
 
