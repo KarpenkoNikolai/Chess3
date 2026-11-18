@@ -401,7 +401,7 @@ namespace Search {
 				const bool shallowFutilityNode = !rootNode && !pvNode && !inCheck && depth < 4;
 				if (shallowFutilityNode) {
 					staticEval = Evaluate(pos);
-					const int reverseFutilityMargin = depth * 120;
+					const int reverseFutilityMargin = depth * 220;
 					if (staticEval > -InMateVal && staticEval < InMateVal &&
 						staticEval - reverseFutilityMargin >= beta) {
 						return staticEval - reverseFutilityMargin;
